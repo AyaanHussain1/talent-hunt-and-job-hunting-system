@@ -1,0 +1,7 @@
+requests
+dotenv
+pdfplumber
+mysql.connector
+pydantic
+instructor
+openai

@@ -1,0 +1,42 @@
+-- create database git_data;
+-- use git_data;
+-- create table github_profiles(id int auto_increment primary key , candidate_id int not null ,github_id bigint not null ,github_username varchar(100) not null , bio text null ,company varchar(266) null ,location varchar(255) null ,public_repos int not null default 0 ,followers int not null default 0,account_created_at datetime null,last_fetched_at datetime not null )
+-- create table github_repos(id int auto_increment primary key ,github_profile_id int not null ,github_repo_id bigint not null,name varchar(255) not null,description text null , primary_language varchar(100) null ,is_fork boolean not null default false,stargazers_count int not null default 0,forks_count int not null default 0,open_issues_count int not null default 0,size_kb int not null default 0,license_key varchar(50) null ,homepage_url varchar (500) null ,topics json null,repo_created_at datetime null ,repo_updated_at datetime null ,repo_pushed_at datetime null ,fetched_at datetime not null ,foreign key (github_profile_id)  references github_profiles(id) on update cascade  on delete restrict);
+-- select * from github_profiles
+-- select * from github_repos
+-- use git_data
+-- CREATE TABLE candidates (
+--     id INT AUTO_INCREMENT PRIMARY KEY,
+--     full_name VARCHAR(255) NOT NULL,
+--     email VARCHAR(255) NULL,
+--     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+-- );
+-- select * from candidates
+-- alter table github_profiles add constraint fk_github_profile_candidate foreign key (candidate_id) references candidates(id) on update cascade on delete restrict
+
+-- use git_data
+-- select * from candidates
+-- select * from github_profiles
+-- DELETE FROM github_profiles 
+-- WHERE id BETWEEN 20 AND 38;
+-- select * from github_profiles
+-- select * from github_repos
+-- use git_data
+-- create table resumes (id int auto_increment primary key,candidate_id int not null unique ,full_name varchar(200) null,email varchar(200) null,phone varchar (50) null ,location varchar (200) null, github_url VARCHAR(500) NULL,
+--     linkedin_url VARCHAR(500) NULL,
+--     skills JSON NULL,
+--     certifications JSON NULL,
+--     education JSON NULL,
+--     projects JSON NULL,raw_text LongText Null,uploaded_at datetime not null default current_timestamp,parsed_At Datetime null ,foreign key (candidate_id) references candidates(id) on update cascade on delete restrict);
+-- select * from candidates where id =2
+-- TRUNCATE TABLE resumes
+-- SET FOREIGN_KEY_CHECKS = 0;
+-- TRUNCATE TABLE github_profiles
+-- TRUNCATE TABLE github_repos
+-- TRUNCATE TABLE candidates
+-- SET FOREIGN_KEY_CHECKS = 1;
+-- select * from github_repos
+-- select * from github_profiles
+-- insert into candidates (full_name,email) values ("Scope","scope@gmail.com");
+-- select * from candidates
+select projects from resumes
