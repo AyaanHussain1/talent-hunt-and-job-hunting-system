@@ -14,7 +14,7 @@ DB_USER = os.environ.get("DB_USER")
 DB_PASSWORD = os.environ.get("DB_PASSWORD")
 DB_NAME = os.environ.get("DB_NAME")
 username = "AyaanHussain1"
-
+username2 = "osama030258-source"
 
 def fetch_and_clean_github_data(username):
 

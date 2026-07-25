@@ -97,10 +97,11 @@ def save_resume_to_database(candidate_id:int,resume_data:ResumeData,raw_text:str
     # one to a plain dict first (.model_dump()), then the whole list to a
     # JSON string, since MySQL's JSON column type needs a JSON string, not
     # raw Python objects.
-    education_json = json.dumps([edu.model_dump() for edu in resume_data.education])
-    projects_json = json.dumps([proj.model_dump() for proj in resume_data.projects])
-    skills_json = json.dumps(resume_data.skills)
-    certifications_json = json.dumps(resume_data.certifications)
+    education_json = json.dumps([edu.model_dump() for edu in resume_data.education or []])
+    projects_json = json.dumps([proj.model_dump() for proj in resume_data.projects or []])
+    skills_json = json.dumps(resume_data.skills or [])
+    certifications_json = json.dumps(resume_data.certifications or [])
+    experience_json = json.dumps([exp.model_dump() for exp in resume_data.experience or []])
 
     connection = mysql.connector.connect(host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME)
     cursor = connection.cursor()
@@ -118,8 +119,8 @@ def save_resume_to_database(candidate_id:int,resume_data:ResumeData,raw_text:str
             INSERT INTO resumes
                 (candidate_id, full_name, email, phone, location, github_url,
                  linkedin_url, skills, certifications, education, projects,
-                 raw_text, uploaded_at, parsed_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 raw_text, uploaded_at, parsed_at,experience)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s)
             ON DUPLICATE KEY UPDATE
                 full_name = VALUES(full_name),
                 email = VALUES(email),
@@ -132,7 +133,8 @@ def save_resume_to_database(candidate_id:int,resume_data:ResumeData,raw_text:str
                 education = VALUES(education),
                 projects = VALUES(projects),
                 raw_text = VALUES(raw_text),
-                parsed_at = VALUES(parsed_at)
+                parsed_at = VALUES(parsed_at),
+                experience = VALUES(experience)
             """,
             (
                 candidate_id,
@@ -149,6 +151,7 @@ def save_resume_to_database(candidate_id:int,resume_data:ResumeData,raw_text:str
                 raw_text,
                 datetime.now(),
                 datetime.now(),
+                experience_json
             )
         )
 
@@ -276,21 +279,20 @@ def generate_ats_report(resume_data,raw_text):
         suggestions.append("Add 2-3 good projects.")
     
     # Certifications
-    cert_count = len(resume_data.certifications)
-
-    if cert_count >= 3:
-
-        certifications_score = 5
-
-    elif cert_count >= 1:
-
-        certifications_score = 3
-
-    else:
-
+    if not resume_data.certifications:
         certifications_score = 0
+    else:
+        cert_count = len(resume_data.certifications)
 
-        suggestions.append("Consider adding certifications.")
+        if cert_count >= 3:
+            certifications_score = 5
+
+        elif cert_count >= 1:
+            certifications_score = 3
+
+        else:
+            certifications_score = 0
+            suggestions.append("Consider adding certifications.")
 
     # Experience and achievements
     experience_score = 0
@@ -341,7 +343,7 @@ def generate_ats_report(resume_data,raw_text):
                     experience_score += 5
                 else:
                     suggestions.append(
-                        "Include measurable achievements in your work experience (e.g'Improved performance by 30%' etc)"
+                        "Include measurable achievements in your work experience (e.g'Improved performance by 30%')"
                     )
 
     # Maximum 30 points
@@ -445,9 +447,79 @@ def generate_ats_report(resume_data,raw_text):
         suggestions=suggestions,
         hiring_recommendation=recommendation
     )
+
+def save_ats_report_to_database(candidate_id: int, ats_report):
+    connection = mysql.connector.connect(
+        host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME
+    )
+    cursor = connection.cursor()
+
+    try:
+        query = """
+            INSERT INTO ats_reports (
+                candidate_id, overall_score, contact_score, summary_score,
+                skills_score, experience_score, education_score, projects_score,
+                certifications_score, formatting_score, strengths, weaknesses,
+                missing_sections, keyword_matches, missing_keywords,
+                suggestions, hiring_recommendation, calculated_at
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
+            )
+            ON DUPLICATE KEY UPDATE
+                overall_score = VALUES(overall_score),
+                contact_score = VALUES(contact_score),
+                summary_score = VALUES(summary_score),
+                skills_score = VALUES(skills_score),
+                experience_score = VALUES(experience_score),
+                education_score = VALUES(education_score),
+                projects_score = VALUES(projects_score),
+                certifications_score = VALUES(certifications_score),
+                formatting_score = VALUES(formatting_score),
+                strengths = VALUES(strengths),
+                weaknesses = VALUES(weaknesses),
+                missing_sections = VALUES(missing_sections),
+                keyword_matches = VALUES(keyword_matches),
+                missing_keywords = VALUES(missing_keywords),
+                suggestions = VALUES(suggestions),
+                hiring_recommendation = VALUES(hiring_recommendation),
+                calculated_at = NOW()
+        """
+
+        values = (
+            candidate_id,
+            ats_report.overall_score,
+            ats_report.contact_score,
+            ats_report.summary_score,
+            ats_report.skills_score,
+            ats_report.experience_score,
+            ats_report.education_score,
+            ats_report.projects_score,
+            ats_report.certifications_score,
+            ats_report.formatting_score,
+            json.dumps(ats_report.strengths),
+            json.dumps(ats_report.weaknesses),
+            json.dumps(ats_report.missing_sections),
+            json.dumps(ats_report.keyword_matches),
+            json.dumps(ats_report.missing_keywords),
+            json.dumps(ats_report.suggestions),
+            ats_report.hiring_recommendation
+        )
+
+        cursor.execute(query, values)
+        connection.commit()
+        print(f"ATS Report saved for candidate_id={candidate_id}.")
+
+    except mysql.connector.Error as e:
+        connection.rollback()
+        print(f"Error saving ATS report: {e}")
+        raise
+
+    finally:
+        cursor.close()
+        connection.close()
+
 result = resume_parser(filename)
 resume_data = extract_resume_data(result["text"])
-print(generate_ats_report(resume_data,result["text"]))
-# print(save_resume_to_database(candidate_id=1,resume_data=resume_data,raw_text=result["text"]))
-# with open("json_data", "w") as f:
-#     json.dump(result, f)
+ats_report = generate_ats_report(resume_data,result["text"])
+save_resume_to_database(candidate_id=1,resume_data=resume_data,raw_text=result["text"])
+print(save_ats_report_to_database(candidate_id=1,ats_report=ats_report))

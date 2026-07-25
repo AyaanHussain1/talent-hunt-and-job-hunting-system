@@ -39,4 +39,72 @@
 -- select * from github_profiles
 -- insert into candidates (full_name,email) values ("Scope","scope@gmail.com");
 -- select * from candidates
-select projects from resumes
+-- select projects from resumes
+-- use git_data
+-- alter table resumes add experience varchar(200) null
+-- select * from resumes 
+-- use git_data
+-- ALTER TABLE resumes MODIFY COLUMN experience JSON;
+-- select * from resumes
+-- select * from github_repos
+-- select * from github_profiles
+-- CREATE TABLE  portfolio_scores (
+--     id INT AUTO_INCREMENT PRIMARY KEY,
+--     candidate_id INT UNIQUE NOT NULL,
+--     portfolio_score FLOAT NOT NULL,
+--     total_repos INT DEFAULT 0,
+--     live_projects_count INT DEFAULT 0,
+--     primary_languages JSON,
+--     strengths JSON,
+--     weaknesses JSON,
+--     calculated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+--     FOREIGN KEY (candidate_id) REFERENCES candidates(id) ON DELETE CASCADE
+-- );
+-- select * from resumes
+-- select * from resumes
+-- select * from resumes
+-- Select * from resumes where candidate_id = 1
+-- select * from portfolio_scores
+-- select * from github_repos
+-- select * from portfolio_scores
+-- select * from github_repos
+-- select * from portfolio_scores
+-- select * from portfolio_scores
+-- SELECT * FROM github_profiles 
+-- use git_data
+-- CREATE TABLE ats_reports (
+--     id INT AUTO_INCREMENT PRIMARY KEY,
+--     candidate_id INT UNIQUE NOT NULL,
+--     overall_score INT NOT NULL,
+--     contact_score INT,
+--     summary_score INT,
+--     skills_score INT,
+--     experience_score INT,
+--     education_score INT,
+--     projects_score INT,
+--     certifications_score INT,
+--     formatting_score INT,
+--     strengths JSON,
+--     weaknesses JSON,
+--     missing_sections JSON,
+--     keyword_matches JSON,
+--     missing_keywords JSON,
+--     suggestions JSON,
+--     hiring_recommendation VARCHAR(50),
+--     calculated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+--     FOREIGN KEY (candidate_id) REFERENCES candidates(id) ON DELETE CASCADE
+-- );
+-- select * from ats_reports
+-- select * from github_profiles
+-- CREATE TABLE candidate_final_scores (
+--     candidate_id INT PRIMARY KEY,
+--     portfolio_quality FLOAT,
+--     project_experience FLOAT,
+--     engineering_readiness FLOAT,
+--     communication FLOAT,
+--     leadership FLOAT,
+--     hiring_confidence FLOAT,
+--     calculated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+--     FOREIGN KEY (candidate_id) REFERENCES candidates(id) ON DELETE CASCADE
+-- );
+select * from candidate_final_scores
