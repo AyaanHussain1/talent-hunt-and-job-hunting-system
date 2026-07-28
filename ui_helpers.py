@@ -1,0 +1,362 @@
+"""Shared UI components, styling, and API helpers for the Streamlit frontend."""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+import requests
+import streamlit as st
+
+DEFAULT_API_URL = "http://127.0.0.1:8000"
+
+
+def inject_custom_css() -> None:
+    st.markdown(
+        """
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+        html, body, [class*="css"] {
+            font-family: 'Inter', sans-serif;
+        }
+
+        #MainMenu, footer, header { visibility: hidden; }
+
+        .block-container {
+            padding-top: 1.5rem;
+            padding-bottom: 2rem;
+            max-width: 1200px;
+        }
+
+        .hero-banner {
+            background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 45%, #06B6D4 100%);
+            padding: 2.5rem 2rem;
+            border-radius: 20px;
+            color: white;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 20px 40px rgba(99, 102, 241, 0.25);
+        }
+
+        .hero-banner h1 {
+            font-size: 2.2rem;
+            font-weight: 800;
+            margin: 0 0 0.5rem 0;
+            letter-spacing: -0.02em;
+        }
+
+        .hero-banner p {
+            font-size: 1.05rem;
+            opacity: 0.92;
+            margin: 0;
+            line-height: 1.6;
+        }
+
+        .hero-badge {
+            display: inline-block;
+            background: rgba(255,255,255,0.2);
+            backdrop-filter: blur(8px);
+            padding: 0.35rem 0.85rem;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            margin-bottom: 0.75rem;
+        }
+
+        .metric-card {
+            background: linear-gradient(145deg, #1E293B 0%, #0F172A 100%);
+            border: 1px solid rgba(99, 102, 241, 0.25);
+            border-radius: 16px;
+            padding: 1.25rem 1.5rem;
+            text-align: center;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+        }
+
+        .metric-card .value {
+            font-size: 2rem;
+            font-weight: 800;
+            background: linear-gradient(90deg, #818CF8, #22D3EE);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .metric-card .label {
+            font-size: 0.85rem;
+            color: #94A3B8;
+            font-weight: 500;
+            margin-top: 0.25rem;
+        }
+
+        .feature-card {
+            background: #1E293B;
+            border: 1px solid rgba(148, 163, 184, 0.15);
+            border-radius: 16px;
+            padding: 1.5rem;
+            height: 100%;
+            transition: border-color 0.2s;
+        }
+
+        .feature-card:hover {
+            border-color: rgba(99, 102, 241, 0.5);
+        }
+
+        .feature-card h3 {
+            font-size: 1.05rem;
+            font-weight: 700;
+            margin: 0 0 0.5rem 0;
+            color: #F1F5F9;
+        }
+
+        .feature-card p {
+            font-size: 0.88rem;
+            color: #94A3B8;
+            margin: 0;
+            line-height: 1.5;
+        }
+
+        .feature-icon {
+            font-size: 1.75rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .section-header {
+            font-size: 1.35rem;
+            font-weight: 700;
+            color: #F1F5F9;
+            margin: 1.5rem 0 1rem 0;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid rgba(99, 102, 241, 0.3);
+        }
+
+        .status-pill {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            font-weight: 600;
+        }
+
+        .status-online { background: rgba(34, 197, 94, 0.15); color: #4ADE80; }
+        .status-offline { background: rgba(239, 68, 68, 0.15); color: #F87171; }
+
+        div[data-testid="stSidebar"] {
+            background: linear-gradient(180deg, #0F172A 0%, #1E293B 100%);
+            border-right: 1px solid rgba(99, 102, 241, 0.2);
+        }
+
+        div[data-testid="stSidebar"] .stMarkdown h1 {
+            font-size: 1.1rem;
+            font-weight: 800;
+            background: linear-gradient(90deg, #818CF8, #22D3EE);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .stButton > button[kind="primary"] {
+            background: linear-gradient(90deg, #6366F1, #8B5CF6);
+            border: none;
+            border-radius: 10px;
+            font-weight: 600;
+            transition: opacity 0.2s, transform 0.1s;
+        }
+
+        .stButton > button[kind="primary"]:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+
+        .score-ring-label {
+            text-align: center;
+            font-size: 0.85rem;
+            color: #94A3B8;
+            margin-top: 0.25rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def init_session_state() -> None:
+    if "api_base_url" not in st.session_state:
+        st.session_state["api_base_url"] = DEFAULT_API_URL
+    if "active_candidate_id" not in st.session_state:
+        st.session_state["active_candidate_id"] = None
+
+
+def get_base_url() -> str:
+    init_session_state()
+    return st.session_state["api_base_url"].rstrip("/")
+
+
+def get_active_candidate_id() -> int | None:
+    init_session_state()
+    return st.session_state.get("active_candidate_id")
+
+
+def api_get(path: str, *, params: dict | None = None, timeout: int = 30) -> tuple[bool, Any, str]:
+    """Returns (success, data_or_none, error_message)."""
+    try:
+        res = requests.get(f"{get_base_url()}{path}", params=params, timeout=timeout)
+        if res.status_code == 200:
+            return True, res.json(), ""
+        return False, None, f"HTTP {res.status_code}: {res.text}"
+    except requests.exceptions.ConnectionError:
+        return False, None, f"Cannot connect to API at {get_base_url()}"
+    except Exception as exc:
+        return False, None, str(exc)
+
+
+def api_post(
+    path: str,
+    *,
+    json_body: dict | None = None,
+    params: dict | None = None,
+    files: dict | None = None,
+    timeout: int = 120,
+) -> tuple[bool, Any, str]:
+    try:
+        res = requests.post(
+            f"{get_base_url()}{path}",
+            json=json_body,
+            params=params,
+            files=files,
+            timeout=timeout,
+        )
+        if res.status_code == 200:
+            return True, res.json(), ""
+        return False, None, f"HTTP {res.status_code}: {res.text}"
+    except requests.exceptions.ConnectionError:
+        return False, None, f"Cannot connect to API at {get_base_url()}"
+    except Exception as exc:
+        return False, None, str(exc)
+
+
+def check_api_health() -> bool:
+    ok, _, _ = api_get("/candidates/", timeout=5)
+    return ok
+
+
+def render_sidebar() -> None:
+    init_session_state()
+    with st.sidebar:
+        st.markdown("# ⚡ TalentAI")
+        st.caption("AI Talent Discovery Platform")
+        st.divider()
+
+        st.session_state["api_base_url"] = st.text_input(
+            "API Base URL",
+            value=st.session_state["api_base_url"],
+            help="FastAPI backend address",
+        )
+
+        online = check_api_health()
+        status_class = "status-online" if online else "status-offline"
+        status_text = "API Online" if online else "API Offline"
+        st.markdown(
+            f'<span class="status-pill {status_class}">● {status_text}</span>',
+            unsafe_allow_html=True,
+        )
+
+        st.divider()
+        st.markdown("**Active Candidate**")
+
+        ok, candidates, err = api_get("/candidates/", timeout=5)
+        if ok and isinstance(candidates, list) and candidates:
+            options = {
+                f"{c['full_name']} (#{c['id']})": c["id"]
+                for c in candidates
+                if isinstance(c, dict) and "id" in c and "full_name" in c
+            }
+            if options:
+                labels = list(options.keys())
+                current = st.session_state.get("active_candidate_id")
+                default_idx = 0
+                if current:
+                    for i, lbl in enumerate(labels):
+                        if options[lbl] == current:
+                            default_idx = i
+                            break
+                selected = st.selectbox(
+                    "Select candidate",
+                    options=labels,
+                    index=default_idx,
+                    label_visibility="collapsed",
+                )
+                st.session_state["active_candidate_id"] = options[selected]
+                st.success(f"ID: **{st.session_state['active_candidate_id']}**")
+            else:
+                st.warning("No valid candidates in response.")
+                st.session_state["active_candidate_id"] = None
+        elif not ok:
+            st.error(err)
+            st.session_state["active_candidate_id"] = None
+        else:
+            st.info("No candidates yet. Register one first.")
+            st.session_state["active_candidate_id"] = None
+
+
+def page_header(title: str, subtitle: str, icon: str = "") -> None:
+    inject_custom_css()
+    icon_part = f"{icon} " if icon else ""
+    st.markdown(
+        f"""
+        <div class="hero-banner">
+            <div class="hero-badge">Startup Platform</div>
+            <h1>{icon_part}{title}</h1>
+            <p>{subtitle}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_metric_card(label: str, value: str | int | float) -> None:
+    st.markdown(
+        f"""
+        <div class="metric-card">
+            <div class="value">{value}</div>
+            <div class="label">{label}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def require_candidate(message: str = "Select an active candidate in the sidebar to continue.") -> int | None:
+    cid = get_active_candidate_id()
+    if not cid:
+        st.warning(message)
+    return cid
+
+
+def parse_json_field(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            return value
+    return value
+
+
+def render_score_bar(label: str, score: int | float, max_score: int = 100) -> None:
+    pct = min(max(float(score) / max_score, 0.0), 1.0)
+    st.markdown(f"**{label}** — {score}/{max_score}")
+    st.progress(pct)
+
+
+def render_skill_tags(skills: list[str], *, label: str = "Skills") -> None:
+    if not skills:
+        return
+    st.markdown(f"**{label}**")
+    cols = st.columns(min(len(skills), 6) or 1)
+    for i, skill in enumerate(skills[:12]):
+        with cols[i % len(cols)]:
+            st.markdown(
+                f'<span class="status-pill status-online">{skill}</span>',
+                unsafe_allow_html=True,
+            )
+    if len(skills) > 12:
+        st.caption(f"+ {len(skills) - 12} more")
