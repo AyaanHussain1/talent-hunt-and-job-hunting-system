@@ -1,2 +1,14 @@
+# Local secrets (configure these in Railway Variables instead)
 token.env
 github-token.txt
+.env
+.env.*
+
+# Python build and runtime artifacts
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local application data
+.streamlit/secrets.toml

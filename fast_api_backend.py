@@ -36,6 +36,12 @@ app.add_middleware(
 )
 
 
+@app.get("/health", tags=["Health"])
+def health_check():
+    """Lightweight Railway health check that does not require a database connection."""
+    return {"status": "ok"}
+
+
 class JobPayload(BaseModel):
     title: str
     company: str
