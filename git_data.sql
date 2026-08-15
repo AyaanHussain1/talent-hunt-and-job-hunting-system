@@ -107,4 +107,29 @@
 --     calculated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 --     FOREIGN KEY (candidate_id) REFERENCES candidates(id) ON DELETE CASCADE
 -- );
-select * from candidate_final_scores
+-- select * from portfolio_scores
+-- select * from ats_reports
+-- use git_data
+-- create table jobs(id int auto_increment primary key,title varchar(255) not null ,
+-- company varchar(255) not null,
+-- job_type enum('Full-Time', 'Remote', 'Freelance', 'Client', 'Internal', 'Startup') NOT NULL,
+-- required_skills json not null ,description text null,
+-- location varchar(255) null,posted_ad datetime not null default current_timestamp);
+-- create table job_matches( id INT AUTO_INCREMENT PRIMARY KEY,
+--     candidate_id INT NOT NULL,
+--     job_id INT NOT NULL,
+--     match_score FLOAT NOT NULL,
+--     matched_skills JSON NOT NULL,
+--     missing_skills JSON NOT NULL,
+--     calculated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+--     unique key unique_candidate_job (candidate_id,job_id),
+--     foreign key (candidate_id) references candidates(id) on update cascade on delete restrict,
+--     foreign key (job_id) references jobs(id) on update cascade on delete restrict);
+-- INSERT INTO jobs (title, company, job_type, required_skills, description, location) VALUES
+-- ('Junior ML Engineer', 'TechCorp', 'Full-Time', '["Python", "Scikit-learn", "Pandas", "NumPy", "Machine Learning"]', 'Build and deploy ML models.', 'Karachi'),
+-- ('Data Analyst', 'DataFlow', 'Remote', '["Python", "SQL", "Pandas", "Matplotlib", "Seaborn"]', 'Analyze and visualize business data.', 'Remote'),
+-- ('AI Engineer Intern', 'AI Startup', 'Startup', '["Python", "Deep Learning", "RAG Pipelines", "Git"]', 'Work on cutting-edge AI systems.', 'Karachi'),
+-- ('Backend Developer', 'WebCo', 'Full-Time', '["Python", "FastAPI", "SQL", "Docker", "REST API"]', 'Build scalable APIs.', 'Remote');
+-- set foreign_key_checks  = 1
+-- select * from jobs
+select * from resumes

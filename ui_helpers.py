@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from html import escape
 from typing import Any
 
 import requests
@@ -21,7 +22,27 @@ def inject_custom_css() -> None:
             font-family: 'Inter', sans-serif;
         }
 
-        #MainMenu, footer, header { visibility: hidden; }
+        #MainMenu, footer { visibility: hidden; }
+
+        /* Keep Streamlit's native sidebar toggle available at all times. */
+        header[data-testid="stHeader"] {
+            background: rgba(15, 23, 42, 0.88);
+            border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+        }
+
+        [data-testid="stSidebarCollapsedControl"] {
+            display: flex !important;
+            visibility: visible !important;
+            background: #6366F1 !important;
+            border-radius: 8px;
+            color: white !important;
+            margin: 0.35rem;
+        }
+
+        [data-testid="stSidebarCollapseButton"] {
+            display: flex !important;
+            visibility: visible !important;
+        }
 
         .block-container {
             padding-top: 1.5rem;
@@ -146,6 +167,38 @@ def inject_custom_css() -> None:
             border-right: 1px solid rgba(99, 102, 241, 0.2);
         }
 
+        .detail-card {
+            background: #162235;
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            border-radius: 14px;
+            padding: 1rem 1.1rem;
+            min-height: 92px;
+        }
+
+        .detail-card .label {
+            color: #94A3B8;
+            font-size: 0.78rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .detail-card .value {
+            color: #F8FAFC;
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-top: 0.45rem;
+            overflow-wrap: anywhere;
+        }
+
+        div[data-testid="stSidebar"] > div:first-child {
+            padding-top: 1rem;
+        }
+
+        div[data-testid="stSidebar"] [data-testid="stSidebarNav"] {
+            padding-top: 0.5rem;
+        }
+
         div[data-testid="stSidebar"] .stMarkdown h1 {
             font-size: 1.1rem;
             font-weight: 800;
@@ -196,6 +249,43 @@ def get_active_candidate_id() -> int | None:
     return st.session_state.get("active_candidate_id")
 
 
+def render_candidate_selector(key: str = "module_candidate_selector") -> int | None:
+    """Show a local candidate picker on a page and return its active candidate ID."""
+    init_session_state()
+    ok, candidates, err = api_get("/candidates/", timeout=5)
+    if not ok:
+        st.error(err)
+        return None
+    if not isinstance(candidates, list) or not candidates:
+        st.info("No candidates are available. Create one from the Candidates page.")
+        return None
+
+    options = {
+        f"{candidate.get('full_name', 'Unnamed')} (#{candidate['id']})": candidate["id"]
+        for candidate in candidates
+        if isinstance(candidate, dict) and candidate.get("id") is not None
+    }
+    if not options:
+        st.info("No valid candidates are available.")
+        return None
+
+    labels = list(options)
+    current = st.session_state.get("active_candidate_id")
+    default_index = next((i for i, label in enumerate(labels) if options[label] == current), 0)
+    selected = st.selectbox("Candidate", labels, index=default_index, key=key)
+    selected_id = options[selected]
+    if st.button("Select Candidate", type="primary", key=f"{key}_button"):
+        st.session_state["active_candidate_id"] = selected_id
+        st.rerun()
+
+    active_id = st.session_state.get("active_candidate_id")
+    if active_id:
+        st.caption(f"Current candidate: #{active_id}")
+    else:
+        st.caption("Choose a candidate, then select Use Selected Candidate.")
+    return active_id
+
+
 def api_get(path: str, *, params: dict | None = None, timeout: int = 30) -> tuple[bool, Any, str]:
     """Returns (success, data_or_none, error_message)."""
     try:
@@ -242,7 +332,7 @@ def check_api_health() -> bool:
 def render_sidebar() -> None:
     init_session_state()
     with st.sidebar:
-        st.markdown("# ⚡ TalentAI")
+        st.markdown("# TalentAI")
         st.caption("AI Talent Discovery Platform")
         st.divider()
 
@@ -256,56 +346,18 @@ def render_sidebar() -> None:
         status_class = "status-online" if online else "status-offline"
         status_text = "API Online" if online else "API Offline"
         st.markdown(
-            f'<span class="status-pill {status_class}">● {status_text}</span>',
+            f'<span class="status-pill {status_class}">{status_text}</span>',
             unsafe_allow_html=True,
         )
 
-        st.divider()
-        st.markdown("**Active Candidate**")
 
-        ok, candidates, err = api_get("/candidates/", timeout=5)
-        if ok and isinstance(candidates, list) and candidates:
-            options = {
-                f"{c['full_name']} (#{c['id']})": c["id"]
-                for c in candidates
-                if isinstance(c, dict) and "id" in c and "full_name" in c
-            }
-            if options:
-                labels = list(options.keys())
-                current = st.session_state.get("active_candidate_id")
-                default_idx = 0
-                if current:
-                    for i, lbl in enumerate(labels):
-                        if options[lbl] == current:
-                            default_idx = i
-                            break
-                selected = st.selectbox(
-                    "Select candidate",
-                    options=labels,
-                    index=default_idx,
-                    label_visibility="collapsed",
-                )
-                st.session_state["active_candidate_id"] = options[selected]
-                st.success(f"ID: **{st.session_state['active_candidate_id']}**")
-            else:
-                st.warning("No valid candidates in response.")
-                st.session_state["active_candidate_id"] = None
-        elif not ok:
-            st.error(err)
-            st.session_state["active_candidate_id"] = None
-        else:
-            st.info("No candidates yet. Register one first.")
-            st.session_state["active_candidate_id"] = None
-
-
-def page_header(title: str, subtitle: str, icon: str = "") -> None:
+def page_header(title: str, subtitle: str) -> None:
     inject_custom_css()
-    icon_part = f"{icon} " if icon else ""
     st.markdown(
         f"""
         <div class="hero-banner">
             <div class="hero-badge">Startup Platform</div>
-            <h1>{icon_part}{title}</h1>
+            <h1>{title}</h1>
             <p>{subtitle}</p>
         </div>
         """,
@@ -325,8 +377,15 @@ def render_metric_card(label: str, value: str | int | float) -> None:
     )
 
 
-def require_candidate(message: str = "Select an active candidate in the sidebar to continue.") -> int | None:
-    cid = get_active_candidate_id()
+def render_detail_card(label: str, value: str | int | float) -> None:
+    st.markdown(
+        f'<div class="detail-card"><div class="label">{escape(str(label))}</div><div class="value">{escape(str(value))}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def require_candidate(message: str = "Select an active candidate from Candidates > Full Profile to continue.") -> int | None:
+    cid = render_candidate_selector()
     if not cid:
         st.warning(message)
     return cid

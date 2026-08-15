@@ -518,8 +518,10 @@ def save_ats_report_to_database(candidate_id: int, ats_report):
         cursor.close()
         connection.close()
 
-result = resume_parser(filename)
-resume_data = extract_resume_data(result["text"])
-ats_report = generate_ats_report(resume_data,result["text"])
-save_resume_to_database(candidate_id=1,resume_data=resume_data,raw_text=result["text"])
-print(save_ats_report_to_database(candidate_id=1,ats_report=ats_report))
+if __name__ == "__main__":
+    # Manual local test only. Keep this out of module import so FastAPI can start.
+    result = resume_parser(filename)
+    resume_data = extract_resume_data(result["text"])
+    ats_report = generate_ats_report(resume_data, result["text"])
+    save_resume_to_database(candidate_id=1, resume_data=resume_data, raw_text=result["text"])
+    save_ats_report_to_database(candidate_id=1, ats_report=ats_report)

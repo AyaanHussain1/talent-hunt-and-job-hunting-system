@@ -181,6 +181,8 @@ def save_portfolio_to_database(portfolio_data: PortfolioScore):
         cursor.close()
         connection.close()
 
-candidate = 1
-score_result = analyze_portfolio(candidate)
-save_portfolio_to_database(score_result)
+if __name__ == "__main__":
+    # Manual local test only. Do not query the database when FastAPI imports this module.
+    candidate = 1
+    score_result = analyze_portfolio(candidate)
+    save_portfolio_to_database(score_result)

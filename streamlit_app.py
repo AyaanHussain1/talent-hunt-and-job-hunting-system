@@ -11,7 +11,6 @@ from ui_helpers import (
 
 st.set_page_config(
     page_title="TalentAI — Home",
-    page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -24,7 +23,7 @@ st.markdown(
     """
     <div class="hero-banner">
         <div class="hero-badge">AI-Powered Hiring</div>
-        <h1>⚡ TalentAI Platform</h1>
+        <h1>TalentAI Platform</h1>
         <p>Discover top engineering talent with resume parsing, GitHub analysis,
         portfolio scoring, and intelligent job matching — all in one place.</p>
     </div>
@@ -50,25 +49,24 @@ with col3:
 st.markdown('<div class="section-header">Platform Modules</div>', unsafe_allow_html=True)
 
 features = [
-    ("📊", "Dashboard", "Real-time platform metrics and overview."),
-    ("👥", "Candidates", "Register talent and inspect full profiles."),
-    ("📄", "Resume & ATS", "Upload PDFs and get ATS optimization reports."),
-    ("🐙", "GitHub", "Extract repos, languages, and dev activity."),
-    ("📈", "Portfolio", "Score project quality and engineering readiness."),
-    ("🎯", "Job Matching", "Vector + keyword fusion job recommendations."),
-    ("💼", "Jobs", "Browse all open job postings."),
-    ("🏢", "Employer", "Search by skill and rank candidates per role."),
+    ("Dashboard", "Real-time platform metrics and overview."),
+    ("Candidates", "Register talent and inspect full profiles."),
+    ("Resume & ATS", "Upload PDFs and get ATS optimization reports."),
+    ("GitHub", "Extract repos, languages, and dev activity."),
+    ("Portfolio", "Score project quality and engineering readiness."),
+    ("Job Matching", "Vector + keyword fusion job recommendations."),
+    ("Jobs", "Browse all open job postings."),
+    ("Employer", "Search by skill and rank candidates per role."),
 ]
 
 row1 = st.columns(4)
 row2 = st.columns(4)
-for i, (icon, title, desc) in enumerate(features):
+for i, (title, desc) in enumerate(features):
     col = row1[i] if i < 4 else row2[i - 4]
     with col:
         st.markdown(
             f"""
             <div class="feature-card">
-                <div class="feature-icon">{icon}</div>
                 <h3>{title}</h3>
                 <p>{desc}</p>
             </div>
@@ -81,4 +79,4 @@ st.divider()
 if active_id != "None":
     st.success(f"Ready to go — active candidate **#{active_id}** is selected.")
 else:
-    st.info("Get started: open **Candidates** in the sidebar to register a profile, then select it above.")
+    st.info("Get started: open **Candidates** to register a profile, then activate it from Full Profile or All Candidates.")

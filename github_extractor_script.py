@@ -248,6 +248,6 @@ def save_to_database(data):
         connection.close()
 
 
-# testing
-cleaned_data = fetch_and_clean_github_data(username=username)
-save_to_database(cleaned_data)
+if __name__ == "__main__":
+    cleaned_data = fetch_and_clean_github_data(username=username)
+    save_to_database(cleaned_data)

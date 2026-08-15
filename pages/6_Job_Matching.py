@@ -11,9 +11,9 @@ from ui_helpers import (
     require_candidate,
 )
 
-st.set_page_config(page_title="Job Matching", page_icon="🎯", layout="wide")
+st.set_page_config(page_title="Job Matching", layout="wide")
 render_sidebar()
-page_header("Job Matching", "Two-stage vector + BM25 fusion matching engine.", "🎯")
+page_header("Job Matching", "Two-stage vector + BM25 fusion matching engine.")
 
 cid = require_candidate()
 if cid:
@@ -80,7 +80,7 @@ if cid:
                 if isinstance(missing, list) and missing:
                     st.markdown("**Skill Gaps**")
                     for sk in missing:
-                        st.markdown(f"- ❌ {sk}")
+                        st.markdown(f"- {sk}")
         else:
             st.info("No match records to display.")
     else:

@@ -77,3 +77,24 @@ class CandidateFinalScores(BaseModel):
     communication: float = Field(description="Formatting, summary, and contact score")
     leadership: float = Field(description="Keyword matches and open-source impact")
     hiring_confidence: float = Field(description="Overall aggregated confidence score")
+
+# job matching engine 
+class JobMatch(BaseModel):
+    candidate_id : int
+    job_id : int
+    job_title : str
+    company : str
+    job_type : str
+    match_score : float  # 0.0 - 100.0 percentage
+    matched_skills : list[str] # skills the candidate has that the job needs 
+    missing_skills : list[str] # skills the job needs that the candidate lacks
+
+class JobMatchingResult(BaseModel):
+    candidate_id: int
+    candidate_name: str
+    total_jobs_evaluated: int
+    matches: list[JobMatch]
+
+class CandidateCreate(BaseModel):
+    full_name: str
+    email: str | None = None

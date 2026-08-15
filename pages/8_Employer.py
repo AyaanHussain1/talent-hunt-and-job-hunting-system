@@ -8,9 +8,9 @@ from ui_helpers import (
     render_sidebar,
 )
 
-st.set_page_config(page_title="Employer Portal", page_icon="🏢", layout="wide")
+st.set_page_config(page_title="Employer Portal", layout="wide")
 render_sidebar()
-page_header("Employer Portal", "Search talent by skill and rank candidates per job.", "🏢")
+page_header("Employer Portal", "Search talent by skill and rank candidates per job.")
 
 tab_search, tab_rankings = st.tabs(["Skill Search", "Rankings by Job"])
 

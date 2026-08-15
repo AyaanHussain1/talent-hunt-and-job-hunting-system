@@ -1,0 +1,15 @@
+Results for Scope:
+Evaluated against 4 jobs
+
+69.12% match — Data Analyst at DataFlow (Remote)
+  Matched: Python, Pandas, Matplotlib, Seaborn
+  Missing: SQL
+67.47% match — Junior ML Engineer at TechCorp (Full-Time)
+  Matched: Python, Scikit-learn, Pandas, NumPy
+  Missing: Machine Learning
+58.25% match — AI Engineer Intern at AI Startup (Startup)
+  Matched: Python, RAG Pipelines, Git
+  Missing: Deep Learning
+26.33% match — Backend Developer at WebCo (Full-Time)
+  Matched: Python
+  Missing: FastAPI, SQL, Docker, REST API

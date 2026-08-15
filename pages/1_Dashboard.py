@@ -2,17 +2,18 @@ import streamlit as st
 
 from ui_helpers import (
     api_get,
-    get_active_candidate_id,
     page_header,
     render_metric_card,
+    render_candidate_selector,
     render_sidebar,
 )
 
-st.set_page_config(page_title="Dashboard", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Dashboard", layout="wide")
 render_sidebar()
-page_header("Dashboard", "Live platform metrics and system overview.", "📊")
+page_header("Dashboard", "Live platform metrics and system overview.")
 
-active_id = get_active_candidate_id()
+st.markdown("#### Select candidate for analysis")
+active_id = render_candidate_selector("dashboard_candidate_selector")
 
 ok_c, candidates, err_c = api_get("/candidates/", timeout=5)
 ok_j, jobs, err_j = api_get("/jobs/", timeout=5)
