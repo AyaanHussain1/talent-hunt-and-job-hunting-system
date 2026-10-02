@@ -1,2 +1,22 @@
+[project]
+name = "talent-hunt-and-job-hunting-system"
+version = "1.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "requests",
+    "python-dotenv",
+    "pdfplumber",
+    "psycopg2-binary",
+    "sqlalchemy",
+    "pydantic",
+    "instructor",
+    "openai",
+    "cryptography",
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+    "pandas",
+]
+
 [tool.vercel]
 entrypoint = "fast_api_backend:app"
