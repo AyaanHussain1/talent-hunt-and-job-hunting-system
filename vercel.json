@@ -1,0 +1,14 @@
+{
+  "builds": [
+    {
+      "src": "fast_api_backend.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "fast_api_backend.py"
+    }
+  ]
+}

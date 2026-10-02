@@ -39,7 +39,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="AI Talent Discovery & Job Placement Platform",
+    title="TalentNexus",
     description="Startup API Backend",
     version="1.0.0",
     lifespan=lifespan,
