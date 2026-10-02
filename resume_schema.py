@@ -39,6 +39,7 @@ class ResumeData(BaseModel):
 
 class AtsReport(BaseModel):
     overall_score : int
+    category_maxima: dict[str, int]
     contact_score: int
     summary_score: int
     skills_score: int

@@ -1,31 +1,48 @@
 import os
 import json
 import shutil
+import tempfile
+from contextlib import asynccontextmanager
 from datetime import datetime, date
+from pathlib import Path
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+import requests
+from sqlalchemy import cast, Text, func
 from dotenv import load_dotenv
-import mysql.connector
 
 # Import functions from modules
 from github_extractor_script import fetch_and_clean_github_data, save_to_database
 from resume_parser import resume_parser, extract_resume_data, save_resume_to_database, generate_ats_report
 from portfolio_analyzer import analyze_portfolio, save_portfolio_to_database
-from job_matching_engine import match_candidate_to_jobs, save_matches_to_database
 from resume_schema import CandidateCreate, ResumeData, Education, Project, Experience
+from database import get_db, Candidate, GitHubProfile, GitHubRepo, Resume, PortfolioScore, PortfolioAudit, ATSReport, Job, JobMatch
+from portfolio_site_auditor import audit_portfolio_site, PortfolioAuditError
 
 load_dotenv("token.env")
 
-DB_HOST = os.environ.get("DB_HOST", "localhost")
-DB_USER = os.environ.get("DB_USER")
-DB_PASSWORD = os.environ.get("DB_PASSWORD")
-DB_NAME = os.environ.get("DB_NAME")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Create PostgreSQL tables from SQLAlchemy models if they don't exist.
+
+    Startup fails if the database schema cannot be initialized, so the API
+    never accepts requests against a missing schema.
+    """
+    from database import init_db
+    init_db()
+    print("PostgreSQL tables verified/created.")
+    yield
+
 
 app = FastAPI(
     title="AI Talent Discovery & Job Placement Platform",
     description="Startup API Backend",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -38,7 +55,7 @@ app.add_middleware(
 
 @app.get("/health", tags=["Health"])
 def health_check():
-    """Lightweight Railway health check that does not require a database connection."""
+    """Lightweight health check that does not require a database connection."""
     return {"status": "ok"}
 
 
@@ -50,10 +67,10 @@ class JobPayload(BaseModel):
     description: str | None = None
     location: str | None = None
 
-def get_db():
-    return mysql.connector.connect(
-        host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME
-    )
+
+class PortfolioLinkPayload(BaseModel):
+    portfolio_url: str
+
 
 def sanitize_data(data):
     """Recursively convert datetime/date objects into ISO strings for clean JSON serialization."""
@@ -68,7 +85,7 @@ def sanitize_data(data):
 
 
 def decode_json_fields(row, fields):
-    """Decode JSON columns returned by MySQL into native Python values."""
+    """Decode JSON columns returned by PostgreSQL into native Python values."""
     if not row:
         return row
     for field in fields:
@@ -79,77 +96,153 @@ def decode_json_fields(row, fields):
                 pass
     return row
 
+
+def coerce_json_list(value):
+    """Return a JSONB column value as a Python list.
+
+    PostgreSQL (psycopg2) returns JSONB natively as list/dict, while older
+    rows written through ``json.dumps`` come back as strings — accept both.
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    return value if isinstance(value, list) else []
+
 # CANDIDATE ENDPOINTS
 
 @app.post("/candidates/", tags=["Candidates"])
 def create_candidate(body: CandidateCreate):
     """Create a new candidate record."""
-    db = get_db()
-    cursor = db.cursor()
-    try:
-        cursor.execute(
-            "INSERT INTO candidates (full_name, email, created_at) VALUES (%s, %s, NOW())",
-            (body.full_name, body.email)
-        )
-        db.commit()
-        return {"candidate_id": cursor.lastrowid, "full_name": body.full_name}
-    except mysql.connector.Error as e:
-        db.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
-    finally:
-        cursor.close()
-        db.close()
+    with get_db() as db:
+        full_name = body.full_name.strip()
+        email = body.email.strip() if body.email and body.email.strip() else None
+        if email:
+            existing = db.query(Candidate).filter(
+                func.lower(func.trim(Candidate.email)) == email.lower()
+            ).first()
+        else:
+            existing = db.query(Candidate).filter(
+                func.lower(func.trim(Candidate.full_name)) == full_name.lower(),
+                Candidate.email.is_(None),
+            ).first()
+
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Candidate already exists (ID #{existing.id}).",
+            )
+
+        try:
+            candidate = Candidate(full_name=full_name, email=email, created_at=datetime.now())
+            db.add(candidate)
+            db.flush()
+            return {"candidate_id": candidate.id, "full_name": full_name}
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/candidates/", tags=["Candidates"])
 def list_candidates():
     """List all candidates with their basic info."""
-    db = get_db()
-    cursor = db.cursor(dictionary=True)
-    try:
-        cursor.execute("SELECT id, full_name, email, created_at FROM candidates ORDER BY id DESC")
-        rows = cursor.fetchall()
-        return sanitize_data(rows)
-    finally:
-        cursor.close()
-        db.close()
+    with get_db() as db:
+        candidates = db.query(Candidate).order_by(Candidate.id.desc()).all()
+        return sanitize_data([
+            {"id": c.id, "full_name": c.full_name, "email": c.email, "created_at": c.created_at}
+            for c in candidates
+        ])
 
 @app.get("/candidates/{candidate_id}", tags=["Candidates"])
 def get_candidate(candidate_id: int):
     """Get a single candidate's full profile from all data sources."""
-    db = get_db()
-    # Buffered results prevent unread rows from one profile query blocking the
-    # remaining resume and portfolio queries when duplicate legacy rows exist.
-    cursor = db.cursor(dictionary=True, buffered=True)
-    try:
-        cursor.execute("SELECT * FROM candidates WHERE id = %s", (candidate_id,))
-        candidate = cursor.fetchone()
+    with get_db() as db:
+        candidate = db.query(Candidate).filter(Candidate.id == candidate_id).first()
         if not candidate:
             raise HTTPException(status_code=404, detail="Candidate not found.")
 
-        cursor.execute("SELECT * FROM github_profiles WHERE candidate_id = %s ORDER BY last_fetched_at DESC LIMIT 1", (candidate_id,))
-        github = cursor.fetchone()
+        github = db.query(GitHubProfile).filter(GitHubProfile.candidate_id == candidate_id).order_by(GitHubProfile.last_fetched_at.desc()).first()
 
-        cursor.execute(
-            "SELECT full_name, email, phone, location, github_url, linkedin_url, skills, education, projects, experience, certifications "
-            "FROM resumes WHERE candidate_id = %s",
-            (candidate_id,)
-        )
-        resume = cursor.fetchone()
-        decode_json_fields(resume, ["skills", "education", "projects", "experience", "certifications"])
+        resume = db.query(Resume).filter(Resume.candidate_id == candidate_id).first()
 
-        cursor.execute("SELECT * FROM portfolio_scores WHERE candidate_id = %s", (candidate_id,))
-        portfolio = cursor.fetchone()
-        decode_json_fields(portfolio, ["primary_languages", "strengths", "weaknesses"])
+        portfolio = db.query(PortfolioScore).filter(PortfolioScore.candidate_id == candidate_id).first()
 
-        return sanitize_data({
-            "candidate": candidate,
-            "github": github,
-            "resume": resume,
-            "portfolio": portfolio
-        })
-    finally:
-        cursor.close()
-        db.close()
+        result = {
+            "candidate": {
+                "id": candidate.id,
+                "full_name": candidate.full_name,
+                "email": candidate.email,
+                "created_at": candidate.created_at
+            },
+            "github": None,
+            "resume": None,
+            "portfolio": None,
+            "portfolio_audit": None,
+        }
+
+        if github:
+            result["github"] = {
+                "id": github.id,
+                "candidate_id": github.candidate_id,
+                "github_id": github.github_id,
+                "github_username": github.github_username,
+                "bio": github.bio,
+                "company": github.company,
+                "location": github.location,
+                "public_repos": github.public_repos,
+                "followers": github.followers,
+                "account_created_at": github.account_created_at,
+                "last_fetched_at": github.last_fetched_at
+            }
+
+        if resume:
+            result["resume"] = {
+                "full_name": resume.full_name,
+                "email": resume.email,
+                "phone": resume.phone,
+                "location": resume.location,
+                "github_url": resume.github_url,
+                "linkedin_url": resume.linkedin_url,
+                "skills": resume.skills,
+                "education": resume.education,
+                "projects": resume.projects,
+                "experience": resume.experience,
+                "certifications": resume.certifications
+            }
+            decode_json_fields(result["resume"], ["skills", "education", "projects", "experience", "certifications"])
+
+        if portfolio:
+            result["portfolio"] = {
+                "id": portfolio.id,
+                "candidate_id": portfolio.candidate_id,
+                "portfolio_score": portfolio.portfolio_score,
+                "total_repos": portfolio.total_repos,
+                "live_projects_count": portfolio.live_projects_count,
+                "primary_languages": portfolio.primary_languages,
+                "strengths": portfolio.strengths,
+                "weaknesses": portfolio.weaknesses,
+                "calculated_at": portfolio.calculated_at
+            }
+            decode_json_fields(result["portfolio"], ["primary_languages", "strengths", "weaknesses"])
+
+        audit = db.query(PortfolioAudit).filter(PortfolioAudit.candidate_id == candidate_id).first()
+        if audit:
+            result["portfolio_audit"] = {
+                "id": audit.id,
+                "candidate_id": audit.candidate_id,
+                "portfolio_url": audit.portfolio_url,
+                "overall_score": audit.overall_score,
+                "category_scores": _portfolio_audit_categories(audit.checks),
+                "checks": audit.checks,
+                "strengths": audit.strengths,
+                "weaknesses": audit.weaknesses,
+                "analyzed_at": audit.analyzed_at,
+            }
+            decode_json_fields(result["portfolio_audit"], ["checks", "strengths", "weaknesses", "category_scores"])
+
+        return sanitize_data(result)
 
 # GITHUB ENDPOINTS
 
@@ -161,13 +254,23 @@ def extract_github(candidate_id: int, github_username: str):
         if not cleaned_data.get("profile"):
             raise HTTPException(status_code=400, detail="Could not fetch GitHub data. Check username.")
 
-        cleaned_data["profile"]["candidate_id"] = candidate_id
-        save_to_database(cleaned_data)
+        save_to_database(cleaned_data, candidate_id=candidate_id)
         return {
             "message": "GitHub data saved successfully.",
             "repos_saved": len(cleaned_data.get("repos", [])),
             "profile": cleaned_data.get("profile")
         }
+    except requests.HTTPError as e:
+        status_code = e.response.status_code if e.response is not None else 502
+        if status_code == 401:
+            raise HTTPException(
+                status_code=401,
+                detail="GitHub rejected the configured token. Verify Github_Token in token.env.",
+            ) from e
+        raise HTTPException(
+            status_code=502,
+            detail=f"GitHub API request failed with status {status_code}.",
+        ) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -176,12 +279,19 @@ def extract_github(candidate_id: int, github_username: str):
 @app.post("/candidates/{candidate_id}/resume", tags=["Resume"])
 def upload_resume(candidate_id: int, file: UploadFile = File(...)):
     """Upload PDF, parse skills/projects with LLM, and store in DB."""
-    if not file.filename.endswith(".pdf"):
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
 
-    temp_path = f"temp_resume_{candidate_id}.pdf"
+    temp_path = None
     try:
-        with open(temp_path, "wb") as f:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            suffix=".pdf",
+            prefix=f"resume_{candidate_id}_",
+            dir=tempfile.gettempdir(),
+            delete=False,
+        ) as f:
+            temp_path = f.name
             shutil.copyfileobj(file.file, f)
 
         raw_result = resume_parser(temp_path)
@@ -198,41 +308,37 @@ def upload_resume(candidate_id: int, file: UploadFile = File(...)):
             "projects_found": len(resume_data.projects),
             "education_found": len(resume_data.education),
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        if os.path.exists(temp_path):
+        if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
 
 @app.get("/candidates/{candidate_id}/ats", tags=["Resume"])
 def get_ats_report(candidate_id: int):
     """Generate ATS score and improvement analysis."""
-    db = get_db()
-    cursor = db.cursor(dictionary=True)
-    try:
-        cursor.execute("SELECT raw_text, full_name, email, phone, location, github_url, linkedin_url, skills, education, projects, experience, certifications FROM resumes WHERE candidate_id = %s", (candidate_id,))
-        resume_row = cursor.fetchone()
+    with get_db() as db:
+        resume_row = db.query(Resume).filter(Resume.candidate_id == candidate_id).first()
         if not resume_row:
             raise HTTPException(status_code=404, detail="No resume found for this candidate.")
 
         resume_data = ResumeData(
-            full_name=resume_row["full_name"],
-            email=resume_row["email"],
-            phone=resume_row["phone"],
-            location=resume_row["location"],
-            github_url=resume_row["github_url"],
-            linkedin_url=resume_row["linkedin_url"],
-            skills=json.loads(resume_row["skills"]) if resume_row["skills"] else [],
-            education=[Education(**e) for e in (json.loads(resume_row["education"]) if resume_row["education"] else [])],
-            projects=[Project(**p) for p in (json.loads(resume_row["projects"]) if resume_row["projects"] else [])],
-            experience=[Experience(**e) for e in (json.loads(resume_row["experience"]) if resume_row["experience"] else [])],
-            certifications=json.loads(resume_row["certifications"]) if resume_row["certifications"] else [],
+            full_name=resume_row.full_name,
+            email=resume_row.email,
+            phone=resume_row.phone,
+            location=resume_row.location,
+            github_url=resume_row.github_url,
+            linkedin_url=resume_row.linkedin_url,
+            skills=coerce_json_list(resume_row.skills),
+            education=[Education(**e) for e in coerce_json_list(resume_row.education)],
+            projects=[Project(**p) for p in coerce_json_list(resume_row.projects)],
+            experience=[Experience(**e) for e in coerce_json_list(resume_row.experience)],
+            certifications=coerce_json_list(resume_row.certifications),
         )
-        report = generate_ats_report(resume_data, resume_row["raw_text"])
+        report = generate_ats_report(resume_data, resume_row.raw_text)
         return report.model_dump()
-    finally:
-        cursor.close()
-        db.close()
 
 # PORTFOLIO ENDPOINTS
 
@@ -247,25 +353,82 @@ def calculate_portfolio(candidate_id: int):
 
 @app.get("/candidates/{candidate_id}/portfolio", tags=["Portfolio"])
 def get_portfolio(candidate_id: int):
-    db = get_db()
-    cursor = db.cursor(dictionary=True)
-    try:
-        cursor.execute("SELECT * FROM portfolio_scores WHERE candidate_id = %s", (candidate_id,))
-        row = cursor.fetchone()
+    with get_db() as db:
+        row = db.query(PortfolioScore).filter(PortfolioScore.candidate_id == candidate_id).first()
         if not row:
             raise HTTPException(status_code=404, detail="No portfolio score found. Run POST first.")
-        decode_json_fields(row, ["primary_languages", "strengths", "weaknesses"])
-        return sanitize_data(row)
-    finally:
-        cursor.close()
-        db.close()
+        
+        result = {
+            "id": row.id,
+            "candidate_id": row.candidate_id,
+            "portfolio_score": row.portfolio_score,
+            "total_repos": row.total_repos,
+            "live_projects_count": row.live_projects_count,
+            "primary_languages": row.primary_languages,
+            "strengths": row.strengths,
+            "weaknesses": row.weaknesses,
+            "calculated_at": row.calculated_at
+        }
+        decode_json_fields(result, ["primary_languages", "strengths", "weaknesses"])
+        return sanitize_data(result)
+
+
+def _portfolio_audit_categories(checks):
+    categories = {}
+    if isinstance(checks, str):
+        try:
+            checks = json.loads(checks)
+        except json.JSONDecodeError:
+            checks = []
+    for check in checks or []:
+        category = check.get("category")
+        if not category:
+            continue
+        summary = categories.setdefault(category, {"score": 0, "max_score": 0})
+        summary["score"] += check.get("points", 0)
+        summary["max_score"] += check.get("max_points", 0)
+    return categories
+
+
+@app.post("/candidates/{candidate_id}/portfolio-site", tags=["Portfolio"])
+def audit_candidate_portfolio(candidate_id: int, body: PortfolioLinkPayload):
+    """Audit and save the candidate's public portfolio website."""
+    with get_db() as db:
+        candidate = db.query(Candidate).filter(Candidate.id == candidate_id).first()
+        if not candidate:
+            raise HTTPException(status_code=404, detail="Candidate not found.")
+        candidate_name = candidate.full_name
+        candidate_email = candidate.email
+
+    try:
+        result = audit_portfolio_site(body.portfolio_url, candidate_name, candidate_email)
+    except PortfolioAuditError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    with get_db() as db:
+        audit = db.query(PortfolioAudit).filter(PortfolioAudit.candidate_id == candidate_id).first()
+        if audit is None:
+            audit = PortfolioAudit(candidate_id=candidate_id)
+            db.add(audit)
+        audit.portfolio_url = result["portfolio_url"]
+        audit.overall_score = result["overall_score"]
+        audit.checks = result["checks"]
+        audit.strengths = result["strengths"]
+        audit.weaknesses = result["weaknesses"]
+        db.flush()
+        result["candidate_id"] = candidate_id
+        result["category_scores"] = _portfolio_audit_categories(result["checks"])
+        result["analyzed_at"] = audit.analyzed_at
+        return sanitize_data(result)
 
 # JOB MATCHING ENDPOINTS
 
 @app.post("/candidates/{candidate_id}/match", tags=["Job Matching"])
 def run_job_matching(candidate_id: int):
-    """Run vector + keyword match and save scores into MySQL."""
+    """Run vector + keyword match and save scores into PostgreSQL."""
     try:
+        from job_matching_engine import match_candidate_to_jobs, save_matches_to_database
+
         result = match_candidate_to_jobs(candidate_id)
         save_matches_to_database(result)
         return result.model_dump()
@@ -277,46 +440,63 @@ def run_job_matching(candidate_id: int):
 @app.get("/candidates/{candidate_id}/matches", tags=["Job Matching"])
 def get_matches(candidate_id: int):
     """Get saved matches for candidate, parsed correctly."""
-    db = get_db()
-    cursor = db.cursor(dictionary=True)
-    try:
-        cursor.execute(
-            """
-            SELECT jm.*, j.title, j.company, j.job_type, j.location
-            FROM job_matches jm
-            JOIN jobs j ON jm.job_id = j.id
-            WHERE jm.candidate_id = %s
-            ORDER BY jm.match_score DESC
-            """,
-            (candidate_id,)
-        )
-        rows = cursor.fetchall()
-        for row in rows:
+    with get_db() as db:
+        matches = db.query(JobMatch, Job).join(Job, JobMatch.job_id == Job.id).filter(
+            JobMatch.candidate_id == candidate_id
+        ).order_by(JobMatch.match_score.desc()).all()
+        
+        rows = []
+        for match, job in matches:
+            row = {
+                "id": match.id,
+                "candidate_id": match.candidate_id,
+                "job_id": match.job_id,
+                "match_score": match.match_score,
+                "matched_skills": match.matched_skills,
+                "missing_skills": match.missing_skills,
+                "calculated_at": match.calculated_at,
+                "title": job.title,
+                "company": job.company,
+                "job_type": job.job_type,
+                "location": job.location
+            }
             if isinstance(row.get("matched_skills"), str):
                 row["matched_skills"] = json.loads(row["matched_skills"])
             if isinstance(row.get("missing_skills"), str):
                 row["missing_skills"] = json.loads(row["missing_skills"])
+            rows.append(row)
+        
         return sanitize_data(rows)
-    finally:
-        cursor.close()
-        db.close()
 
 # EMPLOYER & JOBS ENDPOINTS
 
 @app.get("/jobs/", tags=["Jobs"])
 def list_jobs():
     """List open jobs ordered by ID."""
-    db = get_db()
-    cursor = db.cursor(dictionary=True)
-    try:
-        cursor.execute("SELECT * FROM jobs ORDER BY id DESC")
-        rows = cursor.fetchall()
-        for row in rows:
+    with get_db() as db:
+        jobs = db.query(Job).order_by(Job.id.desc()).all()
+        rows = []
+        for job in jobs:
+            row = {
+                "id": job.id,
+                "title": job.title,
+                "company": job.company,
+                "job_type": job.job_type,
+                "required_skills": job.required_skills,
+                "description": job.description,
+                "location": job.location,
+                "posted_ad": job.posted_ad
+            }
             decode_json_fields(row, ["required_skills"])
+            rows.append(row)
+        
         return sanitize_data(rows)
-    finally:
-        cursor.close()
-        db.close()
+
+
+# ---------------------------------------------------------------------------
+# NOTE: the SPA static mount lives at the very END of this file. It must be
+# registered after every API route, otherwise it shadows them.
+# ---------------------------------------------------------------------------
 
 
 @app.post("/jobs/", tags=["Jobs"])
@@ -326,89 +506,133 @@ def create_or_update_job(job: JobPayload):
     skills = [skill.strip() for skill in job.required_skills if skill and skill.strip()]
     if not title or not company or not skills:
         raise HTTPException(status_code=400, detail="Title, company, and at least one required skill are required.")
-    db = get_db()
-    cursor = db.cursor(dictionary=True)
-    try:
-        cursor.execute("SELECT id FROM jobs WHERE title = %s AND company = %s ORDER BY id DESC LIMIT 1", (title, company))
-        existing = cursor.fetchone()
-        values = (job.job_type, json.dumps(skills), job.description.strip() if job.description else None, job.location.strip() if job.location else None)
-        if existing:
-            cursor.execute(
-                "UPDATE jobs SET job_type = %s, required_skills = %s, description = %s, location = %s, posted_ad = NOW() WHERE id = %s",
-                (*values, existing["id"]),
-            )
-            job_id, action = existing["id"], "updated"
-        else:
-            cursor.execute(
-                "INSERT INTO jobs (title, company, job_type, required_skills, description, location) VALUES (%s, %s, %s, %s, %s, %s)",
-                (title, company, *values),
-            )
-            job_id, action = cursor.lastrowid, "created"
-        db.commit()
-        return {"message": f"Job {action} successfully.", "job_id": job_id, "action": action}
-    except mysql.connector.Error as exc:
-        db.rollback()
-        raise HTTPException(status_code=400, detail=str(exc))
-    finally:
-        cursor.close()
-        db.close()
+    
+    with get_db() as db:
+        try:
+            existing = db.query(Job).filter(Job.title == title, Job.company == company).order_by(Job.id.desc()).first()
+            skills_json = json.dumps(skills)
+            description = job.description.strip() if job.description else None
+            location = job.location.strip() if job.location else None
+            
+            if existing:
+                existing.job_type = job.job_type
+                existing.required_skills = skills_json
+                existing.description = description
+                existing.location = location
+                existing.posted_ad = datetime.now()
+                job_id, action = existing.id, "updated"
+            else:
+                new_job = Job(
+                    title=title,
+                    company=company,
+                    job_type=job.job_type,
+                    required_skills=skills_json,
+                    description=description,
+                    location=location,
+                    posted_ad=datetime.now()
+                )
+                db.add(new_job)
+                db.flush()
+                job_id, action = new_job.id, "created"
+            
+            db.commit()
+            return {"message": f"Job {action} successfully.", "job_id": job_id, "action": action}
+        except Exception as exc:
+            db.rollback()
+            raise HTTPException(status_code=400, detail=str(exc))
 
 @app.get("/employer/candidates", tags=["Employer"])
 def search_candidates(skill: str | None = None):
     """Search candidates using standard SQL pattern matching."""
-    db = get_db()
-    cursor = db.cursor(dictionary=True)
-    try:
+    with get_db() as db:
+        query = db.query(
+            Candidate.id,
+            Candidate.full_name,
+            Candidate.email,
+            Resume.skills,
+            Resume.location,
+            PortfolioScore.portfolio_score
+        ).outerjoin(Resume, Candidate.id == Resume.candidate_id)\
+         .outerjoin(PortfolioScore, Candidate.id == PortfolioScore.candidate_id)
+        
         if skill and skill.strip():
+            # Resume.skills is JSONB, which has no LIKE operator — cast to
+            # text first so pattern matching works on PostgreSQL.
             pattern = f"%{skill.strip().lower()}%"
-            cursor.execute(
-                """
-                SELECT c.id, c.full_name, c.email, r.skills, r.location, ps.portfolio_score
-                FROM candidates c
-                LEFT JOIN resumes r ON c.id = r.candidate_id
-                LEFT JOIN portfolio_scores ps ON c.id = ps.candidate_id
-                WHERE LOWER(r.skills) LIKE %s
-                ORDER BY ps.portfolio_score DESC
-                """,
-                (pattern,)
-            )
-        else:
-            cursor.execute(
-                """
-                SELECT c.id, c.full_name, c.email, r.skills, r.location, ps.portfolio_score
-                FROM candidates c
-                LEFT JOIN resumes r ON c.id = r.candidate_id
-                LEFT JOIN portfolio_scores ps ON c.id = ps.candidate_id
-                ORDER BY ps.portfolio_score DESC
-                """
-            )
-        rows = cursor.fetchall()
-        return sanitize_data(rows)
-    finally:
-        cursor.close()
-        db.close()
+            query = query.filter(cast(Resume.skills, Text).ilike(pattern))
+        
+        query = query.order_by(PortfolioScore.portfolio_score.desc().nullslast())
+        rows = query.all()
+        
+        results = []
+        for row in rows:
+            result = {
+                "id": row.id,
+                "full_name": row.full_name,
+                "email": row.email,
+                "skills": row.skills,
+                "location": row.location,
+                "portfolio_score": row.portfolio_score
+            }
+            if isinstance(result.get("skills"), str):
+                try:
+                    result["skills"] = json.loads(result["skills"])
+                except json.JSONDecodeError:
+                    pass
+            results.append(result)
+        
+        return sanitize_data(results)
 
 @app.get("/employer/jobs/{job_id}/candidates", tags=["Employer"])
 def get_candidates_for_job(job_id: int):
     """Get candidate matches for a specific job position."""
-    db = get_db()
-    cursor = db.cursor(dictionary=True)
-    try:
-        cursor.execute(
-            """
-            SELECT c.id, c.full_name, c.email,
-                   jm.match_score, jm.matched_skills, jm.missing_skills,
-                   ps.portfolio_score
-            FROM job_matches jm
-            JOIN candidates c ON jm.candidate_id = c.id
-            LEFT JOIN portfolio_scores ps ON c.id = ps.candidate_id
-            WHERE jm.job_id = %s
-            ORDER BY jm.match_score DESC
-            """,
-            (job_id,)
-        )
-        rows = cursor.fetchall()
+    with get_db() as db:
+        matches = db.query(JobMatch, Candidate, PortfolioScore).join(
+            Candidate, JobMatch.candidate_id == Candidate.id
+        ).outerjoin(
+            PortfolioScore, Candidate.id == PortfolioScore.candidate_id
+        ).filter(JobMatch.job_id == job_id).order_by(JobMatch.match_score.desc()).all()
+        
+        rows = []
+        for match, candidate, portfolio in matches:
+            row = {
+                "id": candidate.id,
+                "full_name": candidate.full_name,
+                "email": candidate.email,
+                "match_score": match.match_score,
+                "matched_skills": match.matched_skills,
+                "missing_skills": match.missing_skills,
+                "portfolio_score": portfolio.portfolio_score if portfolio else None
+            }
+            if isinstance(row.get("matched_skills"), str):
+                try:
+                    row["matched_skills"] = json.loads(row["matched_skills"])
+                except json.JSONDecodeError:
+                    pass
+            if isinstance(row.get("missing_skills"), str):
+                try:
+                    row["missing_skills"] = json.loads(row["missing_skills"])
+                except json.JSONDecodeError:
+                    pass
+            rows.append(row)
+
         return sanitize_data(rows)
-    finally:
-        cursor.close()
-        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Serve the vanilla HTML/CSS/JS frontend (replaces the old Streamlit app).
+# Registered LAST on purpose: the "/" mount matches every path, so any API
+# route defined after it would be shadowed. API routes above take
+# precedence; anything else falls back to the SPA.
+# ---------------------------------------------------------------------------
+FRONTEND_DIR = Path(__file__).resolve().parent / "frontend"
+
+if FRONTEND_DIR.is_dir():
+    @app.get("/", include_in_schema=False)
+    def serve_spa_root():
+        index = FRONTEND_DIR / "index.html"
+        if index.is_file():
+            return FileResponse(str(index), media_type="text/html")
+        return {"status": "ok", "frontend": "missing"}
+
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

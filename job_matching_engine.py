@@ -1,29 +1,42 @@
 import os
 import json
-import mysql.connector
+import math
+from datetime import datetime
 from dotenv import load_dotenv
+from openai import OpenAI
 from resume_schema import JobMatch, JobMatchingResult
-from langchain_chroma import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_core.documents import Document
+from database import get_db, Candidate, Resume, Job, JobMatch as JobMatchModel
 
 load_dotenv("token.env")
 
-DB_HOST = os.environ.get("DB_HOST", "localhost")
-DB_USER = os.environ.get("DB_USER")
-DB_PASSWORD = os.environ.get("DB_PASSWORD")
-DB_NAME = os.environ.get("DB_NAME")
+def _embed_texts(texts: list[str]) -> list[list[float]]:
+    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("Api_key")
+    if not api_key:
+        raise RuntimeError("Set OPENAI_API_KEY or Api_key to enable job matching.")
 
-# Load the model only when a matching request is made.  Creating it at import
-# time blocks FastAPI startup and can trigger a model download.
-embeddings = None
-
-
-def get_embeddings():
-    global embeddings
-    if embeddings is None:
-        embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    response = OpenAI(api_key=api_key).embeddings.create(
+        model="text-embedding-3-small",
+        input=texts,
+    )
+    embeddings = [
+        item.embedding
+        for item in sorted(response.data, key=lambda item: item.index)
+    ]
+    if len(embeddings) != len(texts):
+        raise RuntimeError("The embeddings API returned an incomplete response.")
     return embeddings
+
+
+def _cosine_similarity(left: list[float], right: list[float]) -> float:
+    if len(left) != len(right):
+        raise ValueError("Embedding vectors must have the same dimensions.")
+
+    dot_product = sum(a * b for a, b in zip(left, right))
+    left_norm = math.sqrt(sum(value * value for value in left))
+    right_norm = math.sqrt(sum(value * value for value in right))
+    if not left_norm or not right_norm:
+        return 0.0
+    return dot_product / (left_norm * right_norm)
 
 def calculate_match(candidate_skills: list[str], required_skills: list[str], semantic_score: float = None) -> dict:
     candidate_skill_set = set(s.lower() for s in candidate_skills)
@@ -50,128 +63,110 @@ def calculate_match(candidate_skills: list[str], required_skills: list[str], sem
     }
 
 def match_candidate_to_jobs(candidate_id: int) -> JobMatchingResult:
-    connection = mysql.connector.connect(host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME)
-    cursor = connection.cursor(dictionary=True)
-    
-    try: 
-        cursor.execute("SELECT full_name FROM candidates WHERE id = %s", (candidate_id,))
-        candidate_row = cursor.fetchone()
+    with get_db() as db:
+        try:
+            candidate_row = db.query(Candidate.full_name).filter(Candidate.id == candidate_id).first()
 
-        if candidate_row is None:
-            raise ValueError(f"Candidate with id={candidate_id} not found.")
+            if candidate_row is None:
+                raise ValueError(f"Candidate with id={candidate_id} not found.")
 
-        candidate_name = candidate_row["full_name"] or f"Candidate {candidate_id}"
+            candidate_name = candidate_row[0] or f"Candidate {candidate_id}"
 
-        cursor.execute("SELECT skills FROM resumes WHERE candidate_id = %s", (candidate_id,))
-        resume_row = cursor.fetchone()
+            resume_row = db.query(Resume.skills).filter(Resume.candidate_id == candidate_id).first()
 
-        if resume_row is None or not resume_row["skills"]:
-            raise ValueError(f"No resume found for candidate_id={candidate_id}. Upload a resume first.")
+            if resume_row is None or not resume_row[0]:
+                raise ValueError(f"No resume found for candidate_id={candidate_id}. Upload a resume first.")
 
-        raw_skills = resume_row["skills"]
-        candidate_skills = json.loads(raw_skills) if isinstance(raw_skills, str) else raw_skills
-        candidate_skills_text = ", ".join(candidate_skills)
+            raw_skills = resume_row[0]
+            candidate_skills = json.loads(raw_skills) if isinstance(raw_skills, str) else raw_skills
+            candidate_skills_text = ", ".join(candidate_skills)
 
-        cursor.execute("SELECT id, title, company, job_type, required_skills FROM jobs")
-        jobs = cursor.fetchall()
+            jobs = db.query(Job).all()
 
-        if not jobs:
-            raise ValueError("No jobs found in database. Add job postings first.")
+            if not jobs:
+                raise ValueError("No jobs found in database. Add job postings first.")
 
-        documents = []
-        for job in jobs:
-            req_skills_list = json.loads(job["required_skills"]) if isinstance(job["required_skills"], str) else job["required_skills"]
-            content = f"Job Title: {job['title']}. Required Skills: {', '.join(req_skills_list)}"
-            
-            documents.append(
-                Document(
-                    page_content=content,
-                    metadata={
-                        "job_id": job["id"],
-                        "title": job["title"],
-                        "company": job["company"],
-                        "job_type": job["job_type"],
-                        "required_skills": json.dumps(req_skills_list)
-                    }
-                )
+            job_documents = []
+            for job in jobs:
+                req_skills_list = json.loads(job.required_skills) if isinstance(job.required_skills, str) else job.required_skills
+                content = f"Job Title: {job.title}. Required Skills: {', '.join(req_skills_list)}"
+                job_documents.append((job, req_skills_list, content))
+
+            embeddings = _embed_texts(
+                [f"Candidate Profile Skills: {candidate_skills_text}"]
+                + [content for _, _, content in job_documents]
+            )
+            candidate_embedding = embeddings[0]
+            results_with_scores = sorted(
+                (
+                    (job, required_skills, _cosine_similarity(candidate_embedding, embedding))
+                    for (job, required_skills, _), embedding in zip(
+                        job_documents,
+                        embeddings[1:],
+                    )
+                ),
+                key=lambda result: result[2],
+                reverse=True,
             )
 
-        vectorstore = Chroma.from_documents(
-            documents=documents,
-            embedding=get_embeddings()
-        )
+            matches = []
+            for job, required_skills, similarity_score in results_with_scores:
+                result = calculate_match(candidate_skills, required_skills, semantic_score=similarity_score)
 
-        results_with_scores = vectorstore.similarity_search_with_relevance_scores(
-            query=f"Candidate Profile Skills: {candidate_skills_text}",
-            k=len(jobs)
-        )
-
-        matches = []
-        for doc, similarity_score in results_with_scores:
-            meta = doc.metadata
-            required_skills = json.loads(meta["required_skills"])
-            
-            result = calculate_match(candidate_skills, required_skills, semantic_score=similarity_score)
-
-            matches.append(
-                JobMatch(
-                    candidate_id=candidate_id,
-                    job_id=meta["job_id"],
-                    job_title=meta["title"],
-                    company=meta["company"],
-                    job_type=meta["job_type"],
-                    match_score=result["match_score"],
-                    matched_skills=result["matched_skills"],
-                    missing_skills=result["missing_skills"]
+                matches.append(
+                    JobMatch(
+                        candidate_id=candidate_id,
+                        job_id=job.id,
+                        job_title=job.title,
+                        company=job.company,
+                        job_type=job.job_type,
+                        match_score=result["match_score"],
+                        matched_skills=result["matched_skills"],
+                        missing_skills=result["missing_skills"]
+                    )
                 )
+
+            matches.sort(key=lambda x: x.match_score, reverse=True)
+
+            return JobMatchingResult(
+                candidate_id=candidate_id,
+                candidate_name=candidate_name,
+                total_jobs_evaluated=len(jobs),
+                matches=matches
             )
 
-        matches.sort(key=lambda x: x.match_score, reverse=True)
-
-        return JobMatchingResult(
-            candidate_id=candidate_id,
-            candidate_name=candidate_name,
-            total_jobs_evaluated=len(jobs),
-            matches=matches
-        )
-
-    finally:
-        cursor.close()
-        connection.close()
+        except Exception as e:
+            raise
 
 def save_matches_to_database(matching_result: JobMatchingResult):
-    connection = mysql.connector.connect(
-        host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME
-    )
-    cursor = connection.cursor()
-    try:
-        for match in matching_result.matches:
-            cursor.execute(
-                """
-                INSERT INTO job_matches
-                    (candidate_id, job_id, match_score, matched_skills, missing_skills, calculated_at)
-                VALUES (%s, %s, %s, %s, %s, NOW()) 
-                ON DUPLICATE KEY UPDATE
-                    match_score = VALUES(match_score),
-                    matched_skills = VALUES(matched_skills),
-                    missing_skills = VALUES(missing_skills),
-                    calculated_at = NOW()
-                """, (
-                    match.candidate_id,
-                    match.job_id,
-                    match.match_score,
-                    json.dumps(match.matched_skills),
-                    json.dumps(match.missing_skills),
-                )
-            )
+    with get_db() as db:
+        try:
+            for match in matching_result.matches:
+                existing = db.query(JobMatchModel).filter(
+                    JobMatchModel.candidate_id == match.candidate_id,
+                    JobMatchModel.job_id == match.job_id
+                ).first()
 
-        connection.commit()
-    except mysql.connector.Error as e:
-        connection.rollback()
-        raise
-    finally:
-        cursor.close()
-        connection.close()
+                if existing:
+                    existing.match_score = match.match_score
+                    existing.matched_skills = json.dumps(match.matched_skills)
+                    existing.missing_skills = json.dumps(match.missing_skills)
+                    existing.calculated_at = datetime.now()
+                else:
+                    new_match = JobMatchModel(
+                        candidate_id=match.candidate_id,
+                        job_id=match.job_id,
+                        match_score=match.match_score,
+                        matched_skills=json.dumps(match.matched_skills),
+                        missing_skills=json.dumps(match.missing_skills),
+                        calculated_at=datetime.now(),
+                    )
+                    db.add(new_match)
+
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            raise
 
 # Prevent execution on import when running via FastAPI
 if __name__ == "__main__":

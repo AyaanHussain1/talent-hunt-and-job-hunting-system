@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TalentAI — AI-Powered Talent Discovery</title>
+  <meta name="description" content="Discover top engineering talent with resume parsing, GitHub analysis, portfolio scoring, and intelligent job matching." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%236366F1'/><path d='M16 8L22 16L16 24L10 16L16 8Z' fill='white'/></svg>" />
+</head>
+<body>
+  <div class="bg-orbs" aria-hidden="true"><span></span><span></span><span></span></div>
+
+  <div class="app">
+    <!-- ============ SIDEBAR ============ -->
+    <aside class="sidebar" id="sidebar">
+      <a href="#/dashboard" class="brand" data-route="dashboard">
+        <span class="brand-mark">
+          <svg width="30" height="30" viewBox="0 0 32 32" fill="none"><rect width="32" height="32" rx="9" fill="url(#lg)"/><path d="M16 7.5 22.5 16 16 24.5 9.5 16 16 7.5Z" fill="white"/><defs><linearGradient id="lg" x1="0" y1="0" x2="32" y2="32"><stop stop-color="#6366F1"/><stop offset="1" stop-color="#8B5CF6"/></linearGradient></defs></svg>
+        </span>
+        <span class="brand-text">TalentAI<small>AI Talent Discovery</small></span>
+      </a>
+
+      <div class="side-label">Platform</div>
+      <nav class="side-nav" id="sideNav">
+        <a href="#/dashboard" data-route="dashboard" class="side-link"><span class="ico">◈</span> Dashboard</a>
+        <a href="#/candidates" data-route="candidates" class="side-link"><span class="ico">◉</span> Candidates</a>
+        <a href="#/resume" data-route="resume" class="side-link"><span class="ico">⬣</span> Resume &amp; ATS</a>
+        <a href="#/github" data-route="github" class="side-link"><span class="ico">⬢</span> GitHub</a>
+        <a href="#/portfolio" data-route="portfolio" class="side-link"><span class="ico">⬔</span> Portfolio</a>
+        <a href="#/matching" data-route="matching" class="side-link"><span class="ico">⬕</span> Job Matching</a>
+        <a href="#/jobs" data-route="jobs" class="side-link"><span class="ico">▣</span> Jobs</a>
+        <a href="#/employer" data-route="employer" class="side-link"><span class="ico">⬒</span> Employer</a>
+      </nav>
+
+      <div class="side-foot">
+        <a href="/docs" target="_blank" rel="noopener" class="side-foot-link">API Docs ↗</a>
+        <span class="ver">v1.0 · vanilla JS</span>
+      </div>
+    </aside>
+    <div class="scrim" id="scrim"></div>
+
+    <!-- ============ MAIN COLUMN ============ -->
+    <div class="column">
+      <header class="topbar">
+        <button class="icon-btn hamburger" id="menuBtn" aria-label="Toggle menu">☰</button>
+        <div class="crumb" id="crumb"><strong>Dashboard</strong><span>Live platform metrics and overview</span></div>
+        <div class="top-actions">
+          <div class="cand-pill" id="candPill" title="Active candidate">No candidate</div>
+          <button class="btn btn-primary btn-sm" id="refreshBtn">↻ Refresh</button>
+        </div>
+      </header>
+
+      <main class="main" id="view"><!-- routed views render here --></main>
+
+      <footer class="foot">TalentAI · Resume parsing · GitHub analysis · Portfolio scoring · Job matching — all in one place.</footer>
+    </div>
+  </div>
+
+  <!-- candidate picker modal (used by pages) -->
+  <div class="overlay" id="overlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-head"><h3>Select candidate</h3><button class="icon-btn" id="overlayClose">✕</button></div>
+      <div class="modal-body"><input id="candSearch" class="input" placeholder="Search name or email…" /><div id="candList" class="cand-list"></div></div>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <script src="./app.js"></script>
+</body>
+</html>

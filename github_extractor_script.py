@@ -1,20 +1,20 @@
-import os 
+import os
 import requests
-import json 
+import json
 from datetime import datetime
-from dotenv import load_dotenv
-import mysql.connector
+from pathlib import Path
+from dotenv import dotenv_values
 
-# for token loading use .env for safety 
-load_dotenv("token.env",override=True) # it reads the .env file 
+TOKEN_ENV_PATH = Path(__file__).resolve().with_name("token.env")
 
-token = os.environ.get("Github_Token")
-DB_HOST = os.environ.get("DB_HOST", "localhost")
-DB_USER = os.environ.get("DB_USER")
-DB_PASSWORD = os.environ.get("DB_PASSWORD")
-DB_NAME = os.environ.get("DB_NAME")
-username = "AyaanHussain1"
-username2 = "osama030258-source"
+
+def _get_github_token():
+    """Read the current GitHub token, including UTF-8-BOM encoded env files."""
+    values = dotenv_values(TOKEN_ENV_PATH, encoding="utf-8-sig")
+    token = values.get("Github_Token") or os.environ.get("Github_Token")
+    return token.strip() if token else None
+
+from database import get_db, GitHubProfile, GitHubRepo, Candidate
 
 def fetch_and_clean_github_data(username):
 
@@ -24,10 +24,14 @@ def fetch_and_clean_github_data(username):
     this function only deals with GitHub and data cleaning.
     """
 
+    token = _get_github_token()
+
     headers = {
     "Authorization": f"Bearer {token}",
     "Accept": "application/vnd.github+json"
     }
+    if not token:
+        headers.pop("Authorization", None)
 
     profile_response = requests.get(f"https://api.github.com/users/{username}", headers=headers)
     profile_response.raise_for_status()
@@ -116,11 +120,10 @@ def fetch_and_clean_github_data(username):
     return {"profile": profile_data, "repos": clean_repos}
 
 
-def save_to_database(data):
-
+def save_to_database(data, candidate_id=None):
     """
-    Takes already cleaned profile + repo data and saves it to MySQL.
-    it does NOT talk to GitHub - this function only deals with the database.
+    Takes already cleaned profile + repo data and saves it to PostgreSQL using SQLAlchemy.
+    It does NOT talk to GitHub - this function only deals with the database.
 
     Automatically finds or creates the matching candidate (no manual id
     typing). If this candidates GitHub data already exists, it UPDATES
@@ -137,117 +140,92 @@ def save_to_database(data):
     profile_data = data["profile"]
     repos = data["repos"]
 
-    connection = mysql.connector.connect(host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME)
-    cursor = connection.cursor()
+    with get_db() as db:
+        try:
+            if candidate_id is not None and not db.query(Candidate.id).filter(
+                Candidate.id == candidate_id
+            ).first():
+                raise ValueError(f"Candidate with id={candidate_id} does not exist.")
 
-    try:
-        # check if this GitHub username was already saved before - and if
-        # so, grab both its candidate_id AND its existing github_profiles
-        # row id, since we need to update/reuse that same profile row
-        # rather than creating a second one.
-        cursor.execute(
-            "select id, candidate_id from github_profiles where github_username = %s",
-            (profile_data["github_username"],)
-        )
-        existing = cursor.fetchone()
+            existing_profile = db.query(GitHubProfile).filter(
+                GitHubProfile.github_username == profile_data["github_username"]
+            ).first()
 
-        if existing is not None:
-            github_profile_id, candidate_id = existing
+            if existing_profile:
+                github_profile_id = existing_profile.id
+                if candidate_id is None:
+                    candidate_id = existing_profile.candidate_id
+                else:
+                    existing_profile.candidate_id = candidate_id
 
-            # update the existing profile row instead of inserting a
-            # new one, so re-running this script does not create duplicates.
-            cursor.execute(
-                """
-                UPDATE github_profiles
-                SET bio = %s, company = %s, location = %s, public_repos = %s,
-                    followers = %s, account_created_at = %s, last_fetched_at = %s
-                WHERE id = %s
-                """,
-                (
-                    profile_data["bio"],
-                    profile_data["company"],
-                    profile_data["location"],
-                    profile_data["public_repos"],
-                    profile_data["followers"],
-                    profile_data["account_created_at"],
-                    profile_data["last_fetched_at"],
-                    github_profile_id,
+                existing_profile.bio = profile_data["bio"]
+                existing_profile.company = profile_data["company"]
+                existing_profile.location = profile_data["location"]
+                existing_profile.public_repos = profile_data["public_repos"]
+                existing_profile.followers = profile_data["followers"]
+                existing_profile.account_created_at = profile_data["account_created_at"]
+                existing_profile.last_fetched_at = profile_data["last_fetched_at"]
+
+                db.query(GitHubRepo).filter(GitHubRepo.github_profile_id == github_profile_id).delete()
+
+            else:
+                if candidate_id is None:
+                    candidate = Candidate(
+                        full_name=profile_data["github_username"],
+                        created_at=datetime.now()
+                    )
+                    db.add(candidate)
+                    db.flush()
+                    candidate_id = candidate.id
+
+                new_profile = GitHubProfile(
+                    candidate_id=candidate_id,
+                    github_id=profile_data["github_id"],
+                    github_username=profile_data["github_username"],
+                    bio=profile_data["bio"],
+                    company=profile_data["company"],
+                    location=profile_data["location"],
+                    public_repos=profile_data["public_repos"],
+                    followers=profile_data["followers"],
+                    account_created_at=profile_data["account_created_at"],
+                    last_fetched_at=profile_data["last_fetched_at"],
                 )
-            )
+                db.add(new_profile)
+                db.flush()
+                github_profile_id = new_profile.id
 
-            # FIX: delete this candidate's old repos before inserting the
-            # fresh ones, so repos don't pile up as duplicates over time.
-            cursor.execute(
-                "delete from github_repos where github_profile_id = %s",
-                (github_profile_id,)
-            )
-
-        else:
-            # brand new candidate - create their record, then their profile
-            cursor.execute(
-                "insert into candidates (full_name, created_at) values (%s, %s)",
-                (profile_data["github_username"], datetime.now())
-            )
-            candidate_id = cursor.lastrowid
-
-            cursor.execute(
-                """
-                INSERT INTO github_profiles
-                    (candidate_id, github_id, github_username, bio, company, location,
-                     public_repos, followers, account_created_at, last_fetched_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    candidate_id,
-                    profile_data["github_id"],
-                    profile_data["github_username"],
-                    profile_data["bio"],
-                    profile_data["company"],
-                    profile_data["location"],
-                    profile_data["public_repos"],
-                    profile_data["followers"],
-                    profile_data["account_created_at"],
-                    profile_data["last_fetched_at"],
+            for repo in repos:
+                db_repo = GitHubRepo(
+                    github_profile_id=github_profile_id,
+                    github_repo_id=repo["github_repo_id"],
+                    name=repo["name"],
+                    description=repo["description"],
+                    primary_language=repo["primary_language"],
+                    is_fork=repo["is_fork"],
+                    stargazers_count=repo["stargazers_count"],
+                    forks_count=repo["forks_count"],
+                    open_issues_count=repo["open_issues_count"],
+                    size_kb=repo["size_kb"],
+                    license_key=repo["license_key"],
+                    homepage_url=repo["homepage_url"],
+                    topics=repo["topics"],
+                    repo_created_at=repo["repo_created_at"],
+                    repo_updated_at=repo["repo_updated_at"],
+                    repo_pushed_at=repo["repo_pushed_at"],
+                    fetched_at=repo["fetched_at"],
                 )
-            )
-            github_profile_id = cursor.lastrowid
+                db.add(db_repo)
 
-        # attach that id to every repo, then insert them all in one batch
-        insert_query = """
-            INSERT INTO github_repos
-                (github_profile_id, github_repo_id, name, description, primary_language,
-                 is_fork, stargazers_count, forks_count, open_issues_count, size_kb,
-                 license_key, homepage_url, topics, repo_created_at, repo_updated_at,
-                 repo_pushed_at, fetched_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """
-        rows = [
-            (
-                github_profile_id, repo["github_repo_id"], repo["name"], repo["description"],
-                repo["primary_language"], repo["is_fork"], repo["stargazers_count"],
-                repo["forks_count"], repo["open_issues_count"], repo["size_kb"],
-                repo["license_key"], repo["homepage_url"], repo["topics"],
-                repo["repo_created_at"], repo["repo_updated_at"], repo["repo_pushed_at"],
-                repo["fetched_at"],
-            )
-            for repo in repos
-        ]
-        cursor.executemany(insert_query, rows)
+            db.commit()
+            print(f"Saved candidate_id={candidate_id}, github_profile_id={github_profile_id}, "
+                  f"{len(repos)} repos.")
 
-        connection.commit()
-        print(f"Saved candidate_id={candidate_id}, github_profile_id={github_profile_id}, "
-              f"{len(repos)} repos.")
-
-    except Exception as e:
-        connection.rollback()
-        print(f"Something went wrong, nothing was saved: {e}")
-        raise
-
-    finally:
-        cursor.close()
-        connection.close()
+        except Exception as e:
+            db.rollback()
+            print(f"Something went wrong, nothing was saved: {e}")
+            raise
 
 
 if __name__ == "__main__":
-    cleaned_data = fetch_and_clean_github_data(username=username)
+    cleaned_data = fetch_and_clean_github_data(username="AyaanHussain1")
     save_to_database(cleaned_data)

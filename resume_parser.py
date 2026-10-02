@@ -1,26 +1,17 @@
 import pdfplumber
-import os 
-import json 
+import os
+import json
 import instructor
 from openai import OpenAI
 from dotenv import load_dotenv
-from resume_schema import ResumeData,AtsReport,Experience
-import mysql.connector
+from resume_schema import ResumeData, AtsReport, Experience
+from database import get_db, Resume, Candidate
 from datetime import datetime
 import re
+
 load_dotenv("token.env")
 
-DB_HOST = os.environ.get("DB_HOST", "localhost")
-DB_USER = os.environ.get("DB_USER")
-DB_PASSWORD = os.environ.get("DB_PASSWORD")
-DB_NAME = os.environ.get("DB_NAME")
-
 api_key = os.environ.get("Api_key")
-
- 
-# instructor wraps the normal OpenAI client so that when we
-# ask for a specific Pydantic model as response_model, we get back a
-# validated instance of that model directly - not raw JSON text.
 
 client = instructor.from_openai(OpenAI(api_key=api_key))
 
@@ -83,89 +74,73 @@ def extract_resume_data(raw_text :str) -> ResumeData:
     
     return response
 
-def save_resume_to_database(candidate_id:int,resume_data:ResumeData,raw_text:str):
+def save_resume_to_database(candidate_id: int, resume_data: ResumeData, raw_text: str):
     """
-    Saves a candidate's parsed resume data to MySQL.
- 
+    Saves a candidate's parsed resume data to PostgreSQL using SQLAlchemy.
+
     Because 'resumes' has a UNIQUE constraint on candidate_id, this uses
-    INSERT ... ON DUPLICATE KEY UPDATE - MySQL automatically inserts a new
+    INSERT ... ON CONFLICT DO UPDATE - PostgreSQL automatically inserts a new
     row if this candidate has no resume yet, or updates their existing row
     if they do. This replaces the older resume with the newest one.
     """
- 
-    # education and projects are lists of Pydantic objects - convert each
-    # one to a plain dict first (.model_dump()), then the whole list to a
-    # JSON string, since MySQL's JSON column type needs a JSON string, not
-    # raw Python objects.
+
     education_json = json.dumps([edu.model_dump() for edu in resume_data.education or []])
     projects_json = json.dumps([proj.model_dump() for proj in resume_data.projects or []])
     skills_json = json.dumps(resume_data.skills or [])
     certifications_json = json.dumps(resume_data.certifications or [])
     experience_json = json.dumps([exp.model_dump() for exp in resume_data.experience or []])
 
-    connection = mysql.connector.connect(host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME)
-    cursor = connection.cursor()
-    try:
+    with get_db() as db:
+        try:
+            candidate = db.query(Candidate).filter(Candidate.id == candidate_id).first()
+            if candidate is None:
+                print(f"Candidate with ID {candidate_id} does not exist.")
+                return False
 
-        cursor.execute("Select id from candidates where id = %s",(candidate_id,))
-        candidate = cursor.fetchone()
-        
-        if candidate is None:
-            print(f"Candidate with ID {candidate_id} does not exist.")
-            return False
+            existing_resume = db.query(Resume).filter(Resume.candidate_id == candidate_id).first()
+            now = datetime.now()
 
-        
-        cursor.execute("""
-            INSERT INTO resumes
-                (candidate_id, full_name, email, phone, location, github_url,
-                 linkedin_url, skills, certifications, education, projects,
-                 raw_text, uploaded_at, parsed_at,experience)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s)
-            ON DUPLICATE KEY UPDATE
-                full_name = VALUES(full_name),
-                email = VALUES(email),
-                phone = VALUES(phone),
-                location = VALUES(location),
-                github_url = VALUES(github_url),
-                linkedin_url = VALUES(linkedin_url),
-                skills = VALUES(skills),
-                certifications = VALUES(certifications),
-                education = VALUES(education),
-                projects = VALUES(projects),
-                raw_text = VALUES(raw_text),
-                parsed_at = VALUES(parsed_at),
-                experience = VALUES(experience)
-            """,
-            (
-                candidate_id,
-                resume_data.full_name,
-                resume_data.email,
-                resume_data.phone,
-                resume_data.location,
-                resume_data.github_url,
-                resume_data.linkedin_url,
-                skills_json,
-                certifications_json,
-                education_json,
-                projects_json,
-                raw_text,
-                datetime.now(),
-                datetime.now(),
-                experience_json
-            )
-        )
+            if existing_resume:
+                existing_resume.full_name = resume_data.full_name
+                existing_resume.email = resume_data.email
+                existing_resume.phone = resume_data.phone
+                existing_resume.location = resume_data.location
+                existing_resume.github_url = resume_data.github_url
+                existing_resume.linkedin_url = resume_data.linkedin_url
+                existing_resume.skills = skills_json
+                existing_resume.certifications = certifications_json
+                existing_resume.education = education_json
+                existing_resume.projects = projects_json
+                existing_resume.experience = experience_json
+                existing_resume.raw_text = raw_text
+                existing_resume.parsed_at = now
+            else:
+                new_resume = Resume(
+                    candidate_id=candidate_id,
+                    full_name=resume_data.full_name,
+                    email=resume_data.email,
+                    phone=resume_data.phone,
+                    location=resume_data.location,
+                    github_url=resume_data.github_url,
+                    linkedin_url=resume_data.linkedin_url,
+                    skills=skills_json,
+                    certifications=certifications_json,
+                    education=education_json,
+                    projects=projects_json,
+                    experience=experience_json,
+                    raw_text=raw_text,
+                    uploaded_at=now,
+                    parsed_at=now,
+                )
+                db.add(new_resume)
 
-        connection.commit()
-        print(f"Resume saved for candidate_id={candidate_id}.")
+            db.commit()
+            print(f"Resume saved for candidate_id={candidate_id}.")
 
-    except mysql.connector.Error as e:
-        connection.rollback()
-        print(f"Something went wrong, nothing was saved: {e}")
-        raise
- 
-    finally:
-        cursor.close()
-        connection.close()
+        except Exception as e:
+            db.rollback()
+            print(f"Something went wrong, nothing was saved: {e}")
+            raise
 
 def generate_ats_report(resume_data,raw_text):
     score = 0
@@ -396,19 +371,42 @@ def generate_ats_report(resume_data,raw_text):
             missing_keywords.append(keyword)
 
 
-    # Final Score
-    score = (
-        contact_Score
-        + summary_score
-        + skills_score
-        + education_score
-        + experience_score
-        + projects_score
-        + certifications_score
-        + formatting_score
-    )
-
-    score = min(score,100)
+    # Normalize each rubric section into weighted points whose maxima sum to 100.
+    category_maxima = {
+        "contact_score": 15,
+        "summary_score": 10,
+        "skills_score": 18,
+        "experience_score": 27,
+        "education_score": 9,
+        "projects_score": 9,
+        "certifications_score": 4,
+        "formatting_score": 8,
+    }
+    raw_maxima = {
+        "contact_score": 15,
+        "summary_score": 10,
+        "skills_score": 20,
+        "experience_score": 30,
+        "education_score": 10,
+        "projects_score": 10,
+        "certifications_score": 5,
+        "formatting_score": 10,
+    }
+    raw_scores = {
+        "contact_score": contact_Score,
+        "summary_score": summary_score,
+        "skills_score": skills_score,
+        "experience_score": experience_score,
+        "education_score": education_score,
+        "projects_score": projects_score,
+        "certifications_score": certifications_score,
+        "formatting_score": formatting_score,
+    }
+    weighted_scores = {
+        name: round(min(value, raw_maxima[name]) * category_maxima[name] / raw_maxima[name])
+        for name, value in raw_scores.items()
+    }
+    score = sum(weighted_scores.values())
 
     # Recommendation
     if score >= 90:
@@ -431,14 +429,15 @@ def generate_ats_report(resume_data,raw_text):
     return AtsReport(
 
         overall_score=score,
-        contact_score=contact_Score,
-        summary_score=summary_score,
-        skills_score=skills_score,
-        experience_score=experience_score,
-        education_score=education_score,
-        projects_score=projects_score,
-        certifications_score=certifications_score,
-        formatting_score=formatting_score,
+        category_maxima=category_maxima,
+        contact_score=weighted_scores["contact_score"],
+        summary_score=weighted_scores["summary_score"],
+        skills_score=weighted_scores["skills_score"],
+        experience_score=weighted_scores["experience_score"],
+        education_score=weighted_scores["education_score"],
+        projects_score=weighted_scores["projects_score"],
+        certifications_score=weighted_scores["certifications_score"],
+        formatting_score=weighted_scores["formatting_score"],
         strengths=strengths,
         weaknesses=weaknesses,
         missing_sections=missing_sections,
@@ -449,74 +448,61 @@ def generate_ats_report(resume_data,raw_text):
     )
 
 def save_ats_report_to_database(candidate_id: int, ats_report):
-    connection = mysql.connector.connect(
-        host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME
-    )
-    cursor = connection.cursor()
+    from database import ATSReport
 
-    try:
-        query = """
-            INSERT INTO ats_reports (
-                candidate_id, overall_score, contact_score, summary_score,
-                skills_score, experience_score, education_score, projects_score,
-                certifications_score, formatting_score, strengths, weaknesses,
-                missing_sections, keyword_matches, missing_keywords,
-                suggestions, hiring_recommendation, calculated_at
-            ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
-            )
-            ON DUPLICATE KEY UPDATE
-                overall_score = VALUES(overall_score),
-                contact_score = VALUES(contact_score),
-                summary_score = VALUES(summary_score),
-                skills_score = VALUES(skills_score),
-                experience_score = VALUES(experience_score),
-                education_score = VALUES(education_score),
-                projects_score = VALUES(projects_score),
-                certifications_score = VALUES(certifications_score),
-                formatting_score = VALUES(formatting_score),
-                strengths = VALUES(strengths),
-                weaknesses = VALUES(weaknesses),
-                missing_sections = VALUES(missing_sections),
-                keyword_matches = VALUES(keyword_matches),
-                missing_keywords = VALUES(missing_keywords),
-                suggestions = VALUES(suggestions),
-                hiring_recommendation = VALUES(hiring_recommendation),
-                calculated_at = NOW()
-        """
+    with get_db() as db:
+        try:
+            existing_report = db.query(ATSReport).filter(ATSReport.candidate_id == candidate_id).first()
+            now = datetime.now()
 
-        values = (
-            candidate_id,
-            ats_report.overall_score,
-            ats_report.contact_score,
-            ats_report.summary_score,
-            ats_report.skills_score,
-            ats_report.experience_score,
-            ats_report.education_score,
-            ats_report.projects_score,
-            ats_report.certifications_score,
-            ats_report.formatting_score,
-            json.dumps(ats_report.strengths),
-            json.dumps(ats_report.weaknesses),
-            json.dumps(ats_report.missing_sections),
-            json.dumps(ats_report.keyword_matches),
-            json.dumps(ats_report.missing_keywords),
-            json.dumps(ats_report.suggestions),
-            ats_report.hiring_recommendation
-        )
+            if existing_report:
+                existing_report.overall_score = ats_report.overall_score
+                existing_report.contact_score = ats_report.contact_score
+                existing_report.summary_score = ats_report.summary_score
+                existing_report.skills_score = ats_report.skills_score
+                existing_report.experience_score = ats_report.experience_score
+                existing_report.education_score = ats_report.education_score
+                existing_report.projects_score = ats_report.projects_score
+                existing_report.certifications_score = ats_report.certifications_score
+                existing_report.formatting_score = ats_report.formatting_score
+                existing_report.strengths = json.dumps(ats_report.strengths)
+                existing_report.weaknesses = json.dumps(ats_report.weaknesses)
+                existing_report.missing_sections = json.dumps(ats_report.missing_sections)
+                existing_report.keyword_matches = json.dumps(ats_report.keyword_matches)
+                existing_report.missing_keywords = json.dumps(ats_report.missing_keywords)
+                existing_report.suggestions = json.dumps(ats_report.suggestions)
+                existing_report.hiring_recommendation = ats_report.hiring_recommendation
+                existing_report.calculated_at = now
+            else:
+                new_report = ATSReport(
+                    candidate_id=candidate_id,
+                    overall_score=ats_report.overall_score,
+                    contact_score=ats_report.contact_score,
+                    summary_score=ats_report.summary_score,
+                    skills_score=ats_report.skills_score,
+                    experience_score=ats_report.experience_score,
+                    education_score=ats_report.education_score,
+                    projects_score=ats_report.projects_score,
+                    certifications_score=ats_report.certifications_score,
+                    formatting_score=ats_report.formatting_score,
+                    strengths=json.dumps(ats_report.strengths),
+                    weaknesses=json.dumps(ats_report.weaknesses),
+                    missing_sections=json.dumps(ats_report.missing_sections),
+                    keyword_matches=json.dumps(ats_report.keyword_matches),
+                    missing_keywords=json.dumps(ats_report.missing_keywords),
+                    suggestions=json.dumps(ats_report.suggestions),
+                    hiring_recommendation=ats_report.hiring_recommendation,
+                    calculated_at=now,
+                )
+                db.add(new_report)
 
-        cursor.execute(query, values)
-        connection.commit()
-        print(f"ATS Report saved for candidate_id={candidate_id}.")
+            db.commit()
+            print(f"ATS Report saved for candidate_id={candidate_id}.")
 
-    except mysql.connector.Error as e:
-        connection.rollback()
-        print(f"Error saving ATS report: {e}")
-        raise
-
-    finally:
-        cursor.close()
-        connection.close()
+        except Exception as e:
+            db.rollback()
+            print(f"Error saving ATS report: {e}")
+            raise
 
 if __name__ == "__main__":
     # Manual local test only. Keep this out of module import so FastAPI can start.

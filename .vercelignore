@@ -1,0 +1,17 @@
+.env
+.env.*
+token.env
+github-token.txt
+.git/
+.venv/
+venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pdf
+*.png
+*.docx
+json_data/
+profile.json
+repo.json
+temp_resume_*.pdf

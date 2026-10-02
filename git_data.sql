@@ -1,135 +1,178 @@
--- create database git_data;
--- use git_data;
--- create table github_profiles(id int auto_increment primary key , candidate_id int not null ,github_id bigint not null ,github_username varchar(100) not null , bio text null ,company varchar(266) null ,location varchar(255) null ,public_repos int not null default 0 ,followers int not null default 0,account_created_at datetime null,last_fetched_at datetime not null )
--- create table github_repos(id int auto_increment primary key ,github_profile_id int not null ,github_repo_id bigint not null,name varchar(255) not null,description text null , primary_language varchar(100) null ,is_fork boolean not null default false,stargazers_count int not null default 0,forks_count int not null default 0,open_issues_count int not null default 0,size_kb int not null default 0,license_key varchar(50) null ,homepage_url varchar (500) null ,topics json null,repo_created_at datetime null ,repo_updated_at datetime null ,repo_pushed_at datetime null ,fetched_at datetime not null ,foreign key (github_profile_id)  references github_profiles(id) on update cascade  on delete restrict);
--- select * from github_profiles
--- select * from github_repos
--- use git_data
--- CREATE TABLE candidates (
---     id INT AUTO_INCREMENT PRIMARY KEY,
---     full_name VARCHAR(255) NOT NULL,
---     email VARCHAR(255) NULL,
---     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
--- );
--- select * from candidates
--- alter table github_profiles add constraint fk_github_profile_candidate foreign key (candidate_id) references candidates(id) on update cascade on delete restrict
+-- ============================================================================
+-- TalentAI — PostgreSQL schema (SQLAlchemy models in database.py are
+-- authoritative; the FastAPI app auto-creates these tables on startup via
+-- init_db(). This file is the manual fallback: run it with
+--   psql "$DATABASE_URL" -f git_data.sql
+-- ============================================================================
 
--- use git_data
--- select * from candidates
--- select * from github_profiles
--- DELETE FROM github_profiles 
--- WHERE id BETWEEN 20 AND 38;
--- select * from github_profiles
--- select * from github_repos
--- use git_data
--- create table resumes (id int auto_increment primary key,candidate_id int not null unique ,full_name varchar(200) null,email varchar(200) null,phone varchar (50) null ,location varchar (200) null, github_url VARCHAR(500) NULL,
---     linkedin_url VARCHAR(500) NULL,
---     skills JSON NULL,
---     certifications JSON NULL,
---     education JSON NULL,
---     projects JSON NULL,raw_text LongText Null,uploaded_at datetime not null default current_timestamp,parsed_At Datetime null ,foreign key (candidate_id) references candidates(id) on update cascade on delete restrict);
--- select * from candidates where id =2
--- TRUNCATE TABLE resumes
--- SET FOREIGN_KEY_CHECKS = 0;
--- TRUNCATE TABLE github_profiles
--- TRUNCATE TABLE github_repos
--- TRUNCATE TABLE candidates
--- SET FOREIGN_KEY_CHECKS = 1;
--- select * from github_repos
--- select * from github_profiles
--- insert into candidates (full_name,email) values ("Scope","scope@gmail.com");
--- select * from candidates
--- select projects from resumes
--- use git_data
--- alter table resumes add experience varchar(200) null
--- select * from resumes 
--- use git_data
--- ALTER TABLE resumes MODIFY COLUMN experience JSON;
--- select * from resumes
--- select * from github_repos
--- select * from github_profiles
--- CREATE TABLE  portfolio_scores (
---     id INT AUTO_INCREMENT PRIMARY KEY,
---     candidate_id INT UNIQUE NOT NULL,
---     portfolio_score FLOAT NOT NULL,
---     total_repos INT DEFAULT 0,
---     live_projects_count INT DEFAULT 0,
---     primary_languages JSON,
---     strengths JSON,
---     weaknesses JSON,
---     calculated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
---     FOREIGN KEY (candidate_id) REFERENCES candidates(id) ON DELETE CASCADE
--- );
--- select * from resumes
--- select * from resumes
--- select * from resumes
--- Select * from resumes where candidate_id = 1
--- select * from portfolio_scores
--- select * from github_repos
--- select * from portfolio_scores
--- select * from github_repos
--- select * from portfolio_scores
--- select * from portfolio_scores
--- SELECT * FROM github_profiles 
--- use git_data
--- CREATE TABLE ats_reports (
---     id INT AUTO_INCREMENT PRIMARY KEY,
---     candidate_id INT UNIQUE NOT NULL,
---     overall_score INT NOT NULL,
---     contact_score INT,
---     summary_score INT,
---     skills_score INT,
---     experience_score INT,
---     education_score INT,
---     projects_score INT,
---     certifications_score INT,
---     formatting_score INT,
---     strengths JSON,
---     weaknesses JSON,
---     missing_sections JSON,
---     keyword_matches JSON,
---     missing_keywords JSON,
---     suggestions JSON,
---     hiring_recommendation VARCHAR(50),
---     calculated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
---     FOREIGN KEY (candidate_id) REFERENCES candidates(id) ON DELETE CASCADE
--- );
--- select * from ats_reports
--- select * from github_profiles
--- CREATE TABLE candidate_final_scores (
---     candidate_id INT PRIMARY KEY,
---     portfolio_quality FLOAT,
---     project_experience FLOAT,
---     engineering_readiness FLOAT,
---     communication FLOAT,
---     leadership FLOAT,
---     hiring_confidence FLOAT,
---     calculated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
---     FOREIGN KEY (candidate_id) REFERENCES candidates(id) ON DELETE CASCADE
--- );
--- select * from portfolio_scores
--- select * from ats_reports
--- use git_data
--- create table jobs(id int auto_increment primary key,title varchar(255) not null ,
--- company varchar(255) not null,
--- job_type enum('Full-Time', 'Remote', 'Freelance', 'Client', 'Internal', 'Startup') NOT NULL,
--- required_skills json not null ,description text null,
--- location varchar(255) null,posted_ad datetime not null default current_timestamp);
--- create table job_matches( id INT AUTO_INCREMENT PRIMARY KEY,
---     candidate_id INT NOT NULL,
---     job_id INT NOT NULL,
---     match_score FLOAT NOT NULL,
---     matched_skills JSON NOT NULL,
---     missing_skills JSON NOT NULL,
---     calculated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
---     unique key unique_candidate_job (candidate_id,job_id),
---     foreign key (candidate_id) references candidates(id) on update cascade on delete restrict,
---     foreign key (job_id) references jobs(id) on update cascade on delete restrict);
--- INSERT INTO jobs (title, company, job_type, required_skills, description, location) VALUES
--- ('Junior ML Engineer', 'TechCorp', 'Full-Time', '["Python", "Scikit-learn", "Pandas", "NumPy", "Machine Learning"]', 'Build and deploy ML models.', 'Karachi'),
--- ('Data Analyst', 'DataFlow', 'Remote', '["Python", "SQL", "Pandas", "Matplotlib", "Seaborn"]', 'Analyze and visualize business data.', 'Remote'),
--- ('AI Engineer Intern', 'AI Startup', 'Startup', '["Python", "Deep Learning", "RAG Pipelines", "Git"]', 'Work on cutting-edge AI systems.', 'Karachi'),
--- ('Backend Developer', 'WebCo', 'Full-Time', '["Python", "FastAPI", "SQL", "Docker", "REST API"]', 'Build scalable APIs.', 'Remote');
--- set foreign_key_checks  = 1
--- select * from jobs
-select * from resumes
+-- Job type enum used by jobs.job_type
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'job_type_enum') THEN
+        CREATE TYPE job_type_enum AS ENUM
+            ('Full-Time', 'Remote', 'Freelance', 'Client', 'Internal', 'Startup');
+    END IF;
+END
+$$;
+
+CREATE TABLE IF NOT EXISTS candidates (
+    id SERIAL PRIMARY KEY,
+    full_name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS github_profiles (
+    id SERIAL PRIMARY KEY,
+    candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    github_id VARCHAR(50) NOT NULL,
+    github_username VARCHAR(100) NOT NULL UNIQUE,
+    bio TEXT NULL,
+    company VARCHAR(255) NULL,
+    location VARCHAR(255) NULL,
+    public_repos INTEGER NOT NULL DEFAULT 0,
+    followers INTEGER NOT NULL DEFAULT 0,
+    account_created_at TIMESTAMPTZ NULL,
+    last_fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS github_repos (
+    id SERIAL PRIMARY KEY,
+    github_profile_id INTEGER NOT NULL REFERENCES github_profiles(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    github_repo_id VARCHAR(50) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    description TEXT NULL,
+    primary_language VARCHAR(100) NULL,
+    is_fork BOOLEAN NOT NULL DEFAULT FALSE,
+    stargazers_count INTEGER NOT NULL DEFAULT 0,
+    forks_count INTEGER NOT NULL DEFAULT 0,
+    open_issues_count INTEGER NOT NULL DEFAULT 0,
+    size_kb INTEGER NOT NULL DEFAULT 0,
+    license_key VARCHAR(50) NULL,
+    homepage_url VARCHAR(500) NULL,
+    topics JSONB NULL,
+    repo_created_at TIMESTAMPTZ NULL,
+    repo_updated_at TIMESTAMPTZ NULL,
+    repo_pushed_at TIMESTAMPTZ NULL,
+    fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_profile_repo UNIQUE (github_profile_id, github_repo_id)
+);
+CREATE INDEX IF NOT EXISTS idx_github_repos_profile_id ON github_repos (github_profile_id);
+
+CREATE TABLE IF NOT EXISTS resumes (
+    id SERIAL PRIMARY KEY,
+    candidate_id INTEGER NOT NULL UNIQUE REFERENCES candidates(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    full_name VARCHAR(200) NULL,
+    email VARCHAR(200) NULL,
+    phone VARCHAR(50) NULL,
+    location VARCHAR(200) NULL,
+    github_url VARCHAR(500) NULL,
+    linkedin_url VARCHAR(500) NULL,
+    skills JSONB NULL,
+    certifications JSONB NULL,
+    education JSONB NULL,
+    projects JSONB NULL,
+    experience JSONB NULL,
+    raw_text TEXT NULL,
+    uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    parsed_at TIMESTAMPTZ NULL
+);
+
+CREATE TABLE IF NOT EXISTS portfolio_scores (
+    id SERIAL PRIMARY KEY,
+    candidate_id INTEGER NOT NULL UNIQUE REFERENCES candidates(id) ON DELETE CASCADE,
+    portfolio_score DOUBLE PRECISION NOT NULL,
+    total_repos INTEGER NOT NULL DEFAULT 0,
+    live_projects_count INTEGER NOT NULL DEFAULT 0,
+    primary_languages JSONB NULL,
+    strengths JSONB NULL,
+    weaknesses JSONB NULL,
+    calculated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS portfolio_audits (
+    id SERIAL PRIMARY KEY,
+    candidate_id INTEGER NOT NULL UNIQUE REFERENCES candidates(id) ON DELETE CASCADE,
+    portfolio_url VARCHAR(1000) NOT NULL,
+    overall_score INTEGER NOT NULL,
+    checks JSONB NOT NULL,
+    strengths JSONB NOT NULL,
+    weaknesses JSONB NOT NULL,
+    analyzed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS ats_reports (
+    id SERIAL PRIMARY KEY,
+    candidate_id INTEGER NOT NULL UNIQUE REFERENCES candidates(id) ON DELETE CASCADE,
+    overall_score INTEGER NOT NULL,
+    contact_score INTEGER NULL,
+    summary_score INTEGER NULL,
+    skills_score INTEGER NULL,
+    experience_score INTEGER NULL,
+    education_score INTEGER NULL,
+    projects_score INTEGER NULL,
+    certifications_score INTEGER NULL,
+    formatting_score INTEGER NULL,
+    strengths JSONB NULL,
+    weaknesses JSONB NULL,
+    missing_sections JSONB NULL,
+    keyword_matches JSONB NULL,
+    missing_keywords JSONB NULL,
+    suggestions JSONB NULL,
+    hiring_recommendation VARCHAR(50) NULL,
+    calculated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS candidate_final_scores (
+    candidate_id INTEGER PRIMARY KEY REFERENCES candidates(id) ON DELETE CASCADE,
+    portfolio_quality DOUBLE PRECISION NULL,
+    project_experience DOUBLE PRECISION NULL,
+    engineering_readiness DOUBLE PRECISION NULL,
+    communication DOUBLE PRECISION NULL,
+    leadership DOUBLE PRECISION NULL,
+    hiring_confidence DOUBLE PRECISION NULL,
+    calculated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS jobs (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    company VARCHAR(255) NOT NULL,
+    job_type job_type_enum NOT NULL,
+    required_skills JSONB NOT NULL,
+    description TEXT NULL,
+    location VARCHAR(255) NULL,
+    posted_ad TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_title_company ON jobs (title, company);
+
+CREATE TABLE IF NOT EXISTS job_matches (
+    id SERIAL PRIMARY KEY,
+    candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    job_id INTEGER NOT NULL REFERENCES jobs(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    match_score DOUBLE PRECISION NOT NULL,
+    matched_skills JSONB NOT NULL,
+    missing_skills JSONB NOT NULL,
+    calculated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_candidate_job UNIQUE (candidate_id, job_id)
+);
+CREATE INDEX IF NOT EXISTS idx_job_matches_candidate_id ON job_matches (candidate_id);
+CREATE INDEX IF NOT EXISTS idx_job_matches_job_id ON job_matches (job_id);
+
+-- ----------------------------------------------------------------------------
+-- Seed job postings (safe to re-run)
+-- ----------------------------------------------------------------------------
+INSERT INTO jobs (title, company, job_type, required_skills, description, location) VALUES
+    ('Junior ML Engineer', 'TechCorp', 'Full-Time',
+     '["Python", "Scikit-learn", "Pandas", "NumPy", "Machine Learning"]',
+     'Build and deploy ML models.', 'Karachi'),
+    ('Data Analyst', 'DataFlow', 'Remote',
+     '["Python", "SQL", "Pandas", "Matplotlib", "Seaborn"]',
+     'Analyze and visualize business data.', 'Remote'),
+    ('AI Engineer Intern', 'AI Startup', 'Startup',
+     '["Python", "Deep Learning", "RAG Pipelines", "Git"]',
+     'Work on cutting-edge AI systems.', 'Karachi'),
+    ('Backend Developer', 'WebCo', 'Full-Time',
+     '["Python", "FastAPI", "SQL", "Docker", "REST API"]',
+     'Build scalable APIs.', 'Remote')
+ON CONFLICT DO NOTHING;
