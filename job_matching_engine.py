@@ -92,22 +92,22 @@ def match_candidate_to_jobs(candidate_id: int) -> JobMatchingResult:
                 content = f"Job Title: {job.title}. Required Skills: {', '.join(req_skills_list)}"
                 job_documents.append((job, req_skills_list, content))
 
-            embeddings = _embed_texts(
-                [f"Candidate Profile Skills: {candidate_skills_text}"]
-                + [content for _, _, content in job_documents]
-            )
-            candidate_embedding = embeddings[0]
-            results_with_scores = sorted(
-                (
+            # Semantic scores come from OpenAI embeddings. If that call fails
+            # (missing key, quota, network) fall back to exact skill overlap
+            # instead of failing the whole request.
+            try:
+                embeddings = _embed_texts(
+                    [f"Candidate Profile Skills: {candidate_skills_text}"]
+                    + [content for _, _, content in job_documents]
+                )
+                candidate_embedding = embeddings[0]
+                results_with_scores = [
                     (job, required_skills, _cosine_similarity(candidate_embedding, embedding))
-                    for (job, required_skills, _), embedding in zip(
-                        job_documents,
-                        embeddings[1:],
-                    )
-                ),
-                key=lambda result: result[2],
-                reverse=True,
-            )
+                    for (job, required_skills, _), embedding in zip(job_documents, embeddings[1:])
+                ]
+            except Exception as embed_err:
+                print(f"Embeddings unavailable, using exact skill match only: {embed_err}")
+                results_with_scores = [(job, required_skills, None) for job, required_skills, _ in job_documents]
 
             matches = []
             for job, required_skills, similarity_score in results_with_scores:

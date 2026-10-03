@@ -1,14 +1,8 @@
 {
-  "builds": [
-    {
-      "src": "fast_api_backend.py",
-      "use": "@vercel/python"
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "fast_api_backend.py": {
+      "maxDuration": 120
     }
-  ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "fast_api_backend.py"
-    }
-  ]
+  }
 }

@@ -11,11 +11,9 @@ dependencies = [
     "pydantic",
     "instructor",
     "openai",
-    "cryptography",
     "fastapi",
     "uvicorn",
     "python-multipart",
-    "pandas",
 ]
 
 [tool.vercel]

@@ -19,6 +19,7 @@ import os
 from contextlib import contextmanager
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Float, Boolean, JSON, ForeignKey, Enum, UniqueConstraint, Index
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
+from sqlalchemy.pool import NullPool
 from sqlalchemy.dialects.postgresql import JSONB
 from datetime import datetime
 from dotenv import load_dotenv
@@ -37,6 +38,10 @@ def _normalize_database_url(url: str) -> str:
     url = (url or "").strip()
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://"):]
+    # Newer SQLAlchemy defaults bare "postgresql://" to the psycopg v3 driver,
+    # but requirements.txt installs psycopg2 -> pin the driver explicitly.
+    if url.startswith("postgresql://"):
+        url = "postgresql+psycopg2://" + url[len("postgresql://"):]
     return url
 
 
@@ -55,23 +60,33 @@ def _build_database_url() -> str:
     password = os.environ.get("DB_PASSWORD")
     name = os.environ.get("DB_NAME")
     if all([user, password, name]):
-        return f"postgresql://{user}:{password}@{host}:{port}/{name}"
-    return "postgresql://postgres:postgres@localhost:5432/talent_hunt"
+        return _normalize_database_url(f"postgresql://{user}:{password}@{host}:{port}/{name}")
+    return _normalize_database_url("postgresql://postgres:postgres@localhost:5432/talent_hunt")
 
 
 DATABASE_URL = _build_database_url()
 
 connect_args = {"connect_timeout": 10}
 sslmode = (os.environ.get("DB_SSLMODE", "") or "").strip()
+if not sslmode and "sslmode=" not in DATABASE_URL and "neon.tech" in DATABASE_URL:
+    sslmode = "require"  # Neon only accepts TLS connections
 if sslmode:
     connect_args["sslmode"] = sslmode
 
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,
-    pool_recycle=300,
-    connect_args=connect_args,
-)
+# On Vercel every request may run in a fresh serverless instance, so a
+# client-side pool only leaks idle connections. Open a connection per session
+# and let Neon's pooler (the "-pooler" host, PgBouncer) do the pooling.
+ON_VERCEL = bool(os.environ.get("VERCEL"))
+
+if ON_VERCEL:
+    engine = create_engine(DATABASE_URL, poolclass=NullPool, connect_args=connect_args)
+else:
+    engine = create_engine(
+        DATABASE_URL,
+        pool_pre_ping=True,
+        pool_recycle=300,
+        connect_args=connect_args,
+    )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 

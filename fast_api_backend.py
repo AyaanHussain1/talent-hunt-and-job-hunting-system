@@ -33,8 +33,16 @@ async def lifespan(app: FastAPI):
     never accepts requests against a missing schema.
     """
     from database import init_db
-    init_db()
-    print("PostgreSQL tables verified/created.")
+    try:
+        init_db()
+        print("PostgreSQL tables verified/created.")
+    except Exception as exc:
+        # On Vercel keep the function alive so /health and /docs still answer and
+        # the real DB error shows up in the logs instead of a blanket 500.
+        if os.environ.get("VERCEL"):
+            print(f"WARNING: database init failed: {exc}")
+        else:
+            raise
     yield
 
 
@@ -625,9 +633,12 @@ def get_candidates_for_job(job_id: int):
 # route defined after it would be shadowed. API routes above take
 # precedence; anything else falls back to the SPA.
 # ---------------------------------------------------------------------------
-FRONTEND_DIR = Path(__file__).resolve().parent / "frontend"
+# The frontend lives in ./public. On Vercel, public/ is served from the CDN at
+# the site root (Vercel's docs say not to mount it), so this block is only for
+# local runs (uvicorn) and non-Vercel hosts.
+FRONTEND_DIR = Path(__file__).resolve().parent / "public"
 
-if FRONTEND_DIR.is_dir():
+if FRONTEND_DIR.is_dir() and not os.environ.get("VERCEL"):
     @app.get("/", include_in_schema=False)
     def serve_spa_root():
         index = FRONTEND_DIR / "index.html"

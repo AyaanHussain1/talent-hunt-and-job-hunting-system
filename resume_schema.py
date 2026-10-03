@@ -10,8 +10,8 @@ class Education(BaseModel):
 
 class Project(BaseModel):
     title: str
-    tech_stack: list[str]
-    description: str
+    tech_stack: list[str] = []
+    description: str = ""
 
 class Experience(BaseModel):
     company: str

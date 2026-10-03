@@ -1,4 +1,4 @@
-# Local secrets (configure these in Railway Variables instead)
+# Local secrets (set these in Vercel Environment Variables instead)
 token.env
 github-token.txt
 .env
@@ -11,3 +11,6 @@ __pycache__/
 venv/
 
 # Local application data
+
+# Vercel
+.vercel/

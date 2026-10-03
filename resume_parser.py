@@ -4,7 +4,8 @@ import json
 import instructor
 from openai import OpenAI
 from dotenv import load_dotenv
-from resume_schema import ResumeData, AtsReport, Experience
+from pydantic import BaseModel
+from resume_schema import ResumeData, AtsReport, Experience, Project
 from database import get_db, Resume, Candidate
 from datetime import datetime
 import re
@@ -13,7 +14,18 @@ load_dotenv("token.env")
 
 api_key = os.environ.get("Api_key")
 
-client = instructor.from_openai(OpenAI(api_key=api_key))
+_client = None
+
+
+def _get_client():
+    """Create the OpenAI/instructor client on first use, not at import time."""
+    global _client
+    if _client is None:
+        key = os.environ.get("Api_key") or os.environ.get("OPENAI_API_KEY")
+        if not key:
+            raise RuntimeError("OpenAI key missing: set the Api_key environment variable.")
+        _client = instructor.from_openai(OpenAI(api_key=key))
+    return _client
 
 filename = "rs.pdf"
 
@@ -57,22 +69,74 @@ def resume_parser(filename):
         return {"text": "", "links": []}
 
 
-def extract_resume_data(raw_text :str) -> ResumeData:
-    
+SYSTEM_PROMPT = (
+    "You are a resume parser. Extract structured information from the resume text. "
+    "Only use information that is actually present in the text - do not invent details.\n\n"
+    "PROJECTS (important): extract EVERY project the candidate lists. A project is any named "
+    "piece of work they built, even if it appears under a heading such as 'Projects', 'Academic "
+    "Projects', 'Personal Projects', 'Key Projects', 'Selected Work', 'Portfolio' or "
+    "'Capstone', or is listed inside Experience, Internship or Education sections, or is only a "
+    "title followed by bullet points. For each project return: title; tech_stack (technologies "
+    "named in that project's text; use an empty list if none are named); description (1-2 "
+    "sentences summarising its bullets; use an empty string if none). Do not skip a project "
+    "because it lacks a tech stack or description. If the resume truly has no projects, "
+    "return an empty list.\n\n"
+    "CERTIFICATIONS: only include formal certifications with an issuing body or platform - "
+    "exclude general statements or summaries."
+)
+
+PROJECT_ONLY_PROMPT = (
+    "Find every project in this resume text and return them. A project is any named piece of "
+    "work the candidate built, under any heading (Projects, Academic Projects, Personal "
+    "Projects, Portfolio, etc.), or inside Experience/Internship/Education sections, or a title "
+    "followed by bullet points. For each: title, tech_stack (only technologies named in the "
+    "text, else empty list), description (1-2 sentence summary, else empty string). "
+    "Do not invent anything. Return an empty list only if there are truly no projects."
+)
+
+
+class _ProjectList(BaseModel):
+    projects: list[Project] = []
+
+
+def extract_resume_data(raw_text: str) -> ResumeData:
     """
     Takes raw resume text (from pdfplumber) and returns a validated
-    ResumeData object using an LLM. this function only deals with text in, structured data out. """
-     
-    response  = client.chat.completions.create(model="gpt-4o-mini",response_model=ResumeData,messages=[{ "role": "system",
-            "content": (
-                "You are a resume parser. Extract structured information "
-                "from the resume text provided. Only use information that "
-                "is actually present in the text - do not invent details."
-                "Only include formal certifications with an issuing body or platform — exclude general statements or summaries"
-            )},
-            {"role":"user","content":raw_text}])
-    
+    ResumeData object using an LLM. This function only deals with text in,
+    structured data out.
+    """
+    client = _get_client()
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        response_model=ResumeData,
+        temperature=0,
+        max_retries=2,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": raw_text},
+        ],
+    )
+
+    # Safety net: the big one-shot extraction sometimes returns no projects even
+    # when the resume has them. Ask again with a prompt that ONLY looks for projects.
+    if not response.projects:
+        try:
+            extra = client.chat.completions.create(
+                model="gpt-4o-mini",
+                response_model=_ProjectList,
+                temperature=0,
+                max_retries=2,
+                messages=[
+                    {"role": "system", "content": PROJECT_ONLY_PROMPT},
+                    {"role": "user", "content": raw_text},
+                ],
+            )
+            response.projects = extra.projects
+        except Exception as exc:
+            print(f"Project-only extraction failed: {exc}")
+
     return response
+
 
 def save_resume_to_database(candidate_id: int, resume_data: ResumeData, raw_text: str):
     """
@@ -143,6 +207,7 @@ def save_resume_to_database(candidate_id: int, resume_data: ResumeData, raw_text
             raise
 
 def generate_ats_report(resume_data,raw_text):
+    raw_text = raw_text or ""
     score = 0
 
     strengths = []

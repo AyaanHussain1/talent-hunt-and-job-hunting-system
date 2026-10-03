@@ -108,6 +108,7 @@ def save_final_scores_to_database(scores: CandidateFinalScores):
 
 
 
-test_id = 2
-scores = calculate_scores(test_id)
-save_final_scores_to_database(scores)
+if __name__ == "__main__":
+    test_id = 2
+    scores = calculate_scores(test_id)
+    save_final_scores_to_database(scores)
